@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::comment::{Comment, LineSide};
 use super::diff_types::{DiffFile, FileStatus};
@@ -28,6 +28,15 @@ pub(crate) enum CommentLocation {
         side: LineSide,
         index: usize,
     },
+}
+
+/// A file's patch, identified by path and the hash of its diff as shown, that
+/// the reviewer marked reviewed. Each commit's version of a file has its own
+/// entry, so marks survive stepping between commits.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReviewedPatch {
+    pub path: PathBuf,
+    pub content_hash: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,12 +144,46 @@ pub struct ReviewSession {
     #[serde(default)]
     pub review_comments: Vec<Comment>,
     pub files: HashMap<PathBuf, FileReview>,
+    #[serde(default)]
+    pub reviewed_patches: BTreeSet<ReviewedPatch>,
     pub session_notes: Option<String>,
 }
 
 impl ReviewSession {
-    fn file_review_is_invalidated(review: &FileReview, content_hash: u64) -> bool {
-        review.reviewed && review.content_hash != Some(content_hash)
+    fn patch_key(path: &Path, content_hash: u64) -> ReviewedPatch {
+        ReviewedPatch {
+            path: path.to_path_buf(),
+            content_hash,
+        }
+    }
+
+    /// Sessions saved before `reviewed_patches` existed only carry the cached
+    /// per-file flag; promote it into the set.
+    pub fn normalize_legacy_marks(&mut self) {
+        for review in self.files.values() {
+            if let (true, Some(hash)) = (review.reviewed, review.content_hash) {
+                self.reviewed_patches
+                    .insert(Self::patch_key(&review.path, hash));
+            }
+        }
+    }
+
+    /// Records the reviewed state of the file's current patch and refreshes the
+    /// cached flag. Without a content hash only the flag is written.
+    pub fn set_file_reviewed(&mut self, path: &PathBuf, reviewed: bool) {
+        let Some(review) = self.files.get_mut(path) else {
+            return;
+        };
+        review.reviewed = reviewed;
+        let Some(hash) = review.content_hash else {
+            return;
+        };
+        let key = Self::patch_key(path, hash);
+        if reviewed {
+            self.reviewed_patches.insert(key);
+        } else {
+            self.reviewed_patches.remove(&key);
+        }
     }
 
     pub fn new(
@@ -165,6 +208,7 @@ impl ReviewSession {
             updated_at: now,
             review_comments: Vec::new(),
             files: HashMap::new(),
+            reviewed_patches: BTreeSet::new(),
             session_notes: None,
         }
     }
@@ -174,37 +218,33 @@ impl ReviewSession {
     }
 
     pub fn has_reviewed_state(&self) -> bool {
-        self.files
-            .values()
-            .any(|file| file.reviewed || !file.reviewed_hunks.is_empty())
+        !self.reviewed_patches.is_empty()
+            || self
+                .files
+                .values()
+                .any(|file| file.reviewed || !file.reviewed_hunks.is_empty())
     }
 
-    /// Registers a file in the session. Returns true if the file was previously
-    /// reviewed but its content changed, causing reviewed status to be reset.
+    /// Registers a file in the session. Returns true if the file was shown
+    /// reviewed before this call and its patch is not reviewed now.
     pub fn add_file(&mut self, path: PathBuf, status: FileStatus, content_hash: u64) -> bool {
+        let reviewed = self
+            .reviewed_patches
+            .contains(&Self::patch_key(&path, content_hash));
         if let Some(review) = self.files.get_mut(&path) {
-            let invalidated = Self::file_review_is_invalidated(review, content_hash);
+            let invalidated = review.reviewed && !reviewed;
             review.content_hash = Some(content_hash);
-            if invalidated {
-                review.reviewed = false;
-            }
+            review.reviewed = reviewed;
             return invalidated;
         }
-        self.files
-            .insert(path.clone(), FileReview::new(path, status, content_hash));
+        let mut review = FileReview::new(path.clone(), status, content_hash);
+        review.reviewed = reviewed;
+        self.files.insert(path, review);
         false
     }
 
     pub fn add_diff_file(&mut self, file: &DiffFile) -> bool {
-        let path = file.display_path().clone();
-        let invalidated = self.add_file(path.clone(), file.status, file.content_hash);
-        if let Some(review) = self.files.get_mut(&path) {
-            let valid_hunks: BTreeSet<_> = file.hunk_review_keys().into_iter().collect();
-            review
-                .reviewed_hunks
-                .retain(|key| valid_hunks.contains(key));
-        }
-        invalidated
+        self.add_file(file.display_path().clone(), file.status, file.content_hash)
     }
 
     pub(crate) fn reconcile_diff_files(&mut self, diff_files: &[DiffFile]) {
@@ -218,16 +258,13 @@ impl ReviewSession {
             .iter()
             .filter(|file| {
                 self.files.get(file.display_path()).is_some_and(|review| {
-                    Self::file_review_is_invalidated(review, file.content_hash)
+                    review.reviewed
+                        && !self
+                            .reviewed_patches
+                            .contains(&Self::patch_key(file.display_path(), file.content_hash))
                 })
             })
             .count()
-    }
-
-    /// Register a transient filtered diff without dropping hunk keys that
-    /// belong to the broader persisted review scope.
-    pub fn add_diff_file_preserving_hunks(&mut self, file: &DiffFile) -> bool {
-        self.add_file(file.display_path().clone(), file.status, file.content_hash)
     }
 
     pub fn get_file_mut(&mut self, path: &PathBuf) -> Option<&mut FileReview> {
@@ -290,7 +327,7 @@ impl ReviewSession {
             for (index, comment) in review.file_comments.iter().enumerate() {
                 if comment.id == comment_id {
                     return Some(CommentLocation::File {
-                        path: path.clone(),
+                        path: path.to_path_buf(),
                         index,
                     });
                 }
@@ -299,7 +336,7 @@ impl ReviewSession {
                 for (index, comment) in comments.iter().enumerate() {
                     if comment.id == comment_id {
                         return Some(CommentLocation::Line {
-                            path: path.clone(),
+                            path: path.to_path_buf(),
                             line: *line,
                             side: comment.side.unwrap_or(LineSide::New),
                             index,
@@ -339,6 +376,9 @@ impl ReviewSession {
                 file.reviewed = false;
                 file.reviewed_hunks.clear();
             }
+        }
+        if scope == ClearScope::CommentsAndReviewed {
+            self.reviewed_patches.clear();
         }
         (cleared, unreviewed)
     }
@@ -573,8 +613,8 @@ mod tests {
         session.add_file(path_a.clone(), FileStatus::Modified, SOME_HASH);
         session.add_file(path_b.clone(), FileStatus::Added, SOME_HASH);
 
-        session.get_file_mut(&path_a).unwrap().reviewed = true;
-        session.get_file_mut(&path_b).unwrap().reviewed = true;
+        session.set_file_reviewed(&path_a, true);
+        session.set_file_reviewed(&path_b, true);
 
         let (cleared, unreviewed) = session.clear_comments(ClearScope::CommentsAndReviewed);
         assert_eq!(cleared, 0);
@@ -591,7 +631,7 @@ mod tests {
         session.add_file(reviewed.clone(), FileStatus::Modified, SOME_HASH);
         session.add_file(pending.clone(), FileStatus::Modified, SOME_HASH);
 
-        session.get_file_mut(&reviewed).unwrap().reviewed = true;
+        session.set_file_reviewed(&reviewed, true);
 
         let (_, unreviewed) = session.clear_comments(ClearScope::CommentsAndReviewed);
         assert_eq!(unreviewed, 1);
@@ -602,8 +642,8 @@ mod tests {
         let mut session = test_session();
         let path = PathBuf::from("src/lib.rs");
         session.add_file(path.clone(), FileStatus::Modified, SOME_HASH);
+        session.set_file_reviewed(&path, true);
         let file = session.get_file_mut(&path).unwrap();
-        file.reviewed = true;
         file.add_file_comment(Comment::new(
             "comment".to_string(),
             CommentType::from_id("note"),
@@ -647,8 +687,8 @@ mod tests {
         let mut session = test_session();
         let path = PathBuf::from("src/lib.rs");
         session.add_file(path.clone(), FileStatus::Modified, SOME_HASH);
+        session.set_file_reviewed(&path, true);
         let file = session.get_file_mut(&path).unwrap();
-        file.reviewed = true;
         file.add_file_comment(Comment::new(
             "comment".to_string(),
             CommentType::from_id("note"),
@@ -683,7 +723,7 @@ mod tests {
         let mut session = test_session();
         let path = PathBuf::from("stable.rs");
         session.add_file(path.clone(), FileStatus::Modified, 100);
-        session.get_file_mut(&path).unwrap().reviewed = true;
+        session.set_file_reviewed(&path, true);
 
         let invalidated = session.add_file(path.clone(), FileStatus::Modified, 100);
         assert!(!invalidated);
@@ -695,7 +735,7 @@ mod tests {
         let mut session = test_session();
         let path = PathBuf::from("changed.rs");
         session.add_file(path.clone(), FileStatus::Modified, 100);
-        session.get_file_mut(&path).unwrap().reviewed = true;
+        session.set_file_reviewed(&path, true);
 
         let invalidated = session.add_file(path.clone(), FileStatus::Modified, 200);
         assert!(invalidated);
@@ -980,8 +1020,10 @@ mod tests {
         assert_ne!(first_key, second_key);
         assert_ne!(first_key, shifted.hunk_review_key(0).unwrap());
         assert_ne!(second_key, shifted.hunk_review_key(1).unwrap());
-        assert!(!session.is_hunk_reviewed(&path, &first_key));
+        assert!(session.is_hunk_reviewed(&path, &first_key));
         assert!(!session.is_hunk_reviewed(&path, &second_key));
+        assert!(!session.is_hunk_reviewed(&path, &shifted.hunk_review_key(0).unwrap()));
+        assert!(!session.is_hunk_reviewed(&path, &shifted.hunk_review_key(1).unwrap()));
     }
 
     #[test]
@@ -1025,7 +1067,56 @@ mod tests {
     }
 
     #[test]
-    fn should_prune_reviewed_hunks_that_no_longer_exist() {
+    fn should_roundtrip_reviewed_patches_through_json() {
+        let mut session = test_session();
+        let path = PathBuf::from("f.txt");
+        session.add_file(path.clone(), FileStatus::Modified, 11);
+        session.set_file_reviewed(&path, true);
+
+        let json = serde_json::to_string(&session).unwrap();
+        let loaded: ReviewSession = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            loaded.reviewed_patches.into_iter().collect::<Vec<_>>(),
+            vec![ReviewedPatch {
+                path,
+                content_hash: 11
+            }]
+        );
+    }
+
+    #[test]
+    fn should_keep_reviewed_state_when_the_marked_patch_is_not_on_screen() {
+        let mut session = test_session();
+        let path = PathBuf::from("f.txt");
+        session.add_file(path.clone(), FileStatus::Modified, 11);
+        session.set_file_reviewed(&path, true);
+        session.add_file(path, FileStatus::Modified, 22);
+
+        assert_eq!(session.reviewed_count(), 0);
+        assert!(session.has_reviewed_state());
+    }
+
+    #[test]
+    fn should_promote_legacy_reviewed_flag_into_reviewed_patches() {
+        let mut session = test_session();
+        let path = PathBuf::from("f.txt");
+        session.add_file(path.clone(), FileStatus::Modified, 11);
+        session.get_file_mut(&path).unwrap().reviewed = true;
+        let mut json: serde_json::Value = serde_json::to_value(&session).unwrap();
+        json.as_object_mut().unwrap().remove("reviewed_patches");
+
+        let mut loaded: ReviewSession = serde_json::from_value(json).unwrap();
+        assert!(loaded.reviewed_patches.is_empty());
+        loaded.normalize_legacy_marks();
+
+        assert_eq!(loaded.reviewed_patches.len(), 1);
+        assert!(!loaded.add_file(path.clone(), FileStatus::Modified, 11));
+        assert!(loaded.is_file_reviewed(&path));
+    }
+
+    #[test]
+    fn should_keep_reviewed_hunks_that_no_longer_exist() {
         let mut session = test_session();
         let original = test_diff_file(
             "src/main.rs",
@@ -1047,7 +1138,7 @@ mod tests {
         session.add_diff_file(&updated);
 
         assert!(session.is_hunk_reviewed(&path, &kept_key));
-        assert!(!session.is_hunk_reviewed(&path, &removed_key));
+        assert!(session.is_hunk_reviewed(&path, &removed_key));
     }
 
     #[test]
@@ -1067,7 +1158,7 @@ mod tests {
         review.toggle_hunk_reviewed(second_key.clone());
 
         let subset = test_diff_file("src/main.rs", vec![test_hunk(10, "first")]);
-        session.add_diff_file_preserving_hunks(&subset);
+        session.add_diff_file(&subset);
 
         assert!(session.is_hunk_reviewed(&path, &first_key));
         assert!(session.is_hunk_reviewed(&path, &second_key));
@@ -1082,7 +1173,7 @@ mod tests {
         session.files.insert(
             path.clone(),
             FileReview {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 reviewed: true,
                 status: FileStatus::Modified,
                 file_comments: Vec::new(),

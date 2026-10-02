@@ -596,19 +596,11 @@ fn should_keep_a_reviewed_file_marked_when_a_watch_tick_changes_a_different_file
     );
 }
 
-/// Hunk-level marks are the other way a file gets marked reviewed, and they
-/// are keyed by hunk content rather than by position. An edited hunk
-/// produces a different key, so the stale one is dropped; an untouched hunk
-/// in the same file keeps its key and stays marked.
-///
-/// This is deliberate, and it looks like a bug from the outside: the file
-/// list shows the unreviewed glyph the moment the file-level mark clears,
-/// while a hunk that did not change stays collapsed under it. The glyph
-/// reads only `FileReview::reviewed` and never consults the hunk set, so
-/// the two disagree. Preserving the surviving marks is still the better
-/// trade, because the alternative discards reviews of untouched hunks.
+/// Hunk-level marks are keyed by hunk content and are never pruned on reload.
+/// An edited hunk gets a new key, so it is unmarked, while the stale key stays
+/// in the set and the untouched hunk keeps its mark.
 #[test]
-fn should_unmark_only_the_edited_hunk_when_a_watch_tick_changes_it() {
+fn should_keep_stale_hunk_keys_and_leave_the_edited_hunk_unmarked_after_a_watch_tick() {
     let before = make_file_with_hunks("a.rs", vec![make_hunk(1, 2), make_hunk(40, 2)]);
     let keys = before.hunk_review_keys();
     let mut app = build_app(vec![before], DiffSource::WorkingTree);
@@ -621,6 +613,7 @@ fn should_unmark_only_the_edited_hunk_when_a_watch_tick_changes_it() {
 
     // Same second hunk, different first hunk.
     let after = make_file_with_hunks("a.rs", vec![make_hunk(1, 3), make_hunk(40, 2)]);
+    let edited_key = after.hunk_review_keys()[0].clone();
     deliver(
         &mut app,
         working_tree_request(),
@@ -639,8 +632,12 @@ fn should_unmark_only_the_edited_hunk_when_a_watch_tick_changes_it() {
         .expect("file still in session")
         .reviewed_hunks;
     assert!(
-        !reviewed_hunks.contains(&keys[0]),
-        "the edited hunk's mark must come off"
+        !reviewed_hunks.contains(&edited_key),
+        "the edited hunk is a new key and has no mark"
+    );
+    assert!(
+        reviewed_hunks.contains(&keys[0]),
+        "the stale key is kept for when the hunk returns"
     );
     assert!(
         reviewed_hunks.contains(&keys[1]),

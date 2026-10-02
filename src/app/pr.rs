@@ -69,11 +69,7 @@ impl App {
         // inline_commit_selector renderer Just Works.
         let since_last_review_message = self.apply_pr_commit_selector(commits, review_metadata);
 
-        // Ensure session has all files registered after the swap. A strict
-        // selector range is a filtered view, not a new review scope.
-        let preserve_hunks =
-            Self::is_strict_commit_selection(self.commit_selection_range, self.pr_commits.len());
-        Self::register_diff_files(&mut self.session, &self.diff_files, preserve_hunks);
+        Self::register_diff_files(&mut self.session, &self.diff_files);
 
         self.sort_files_by_directory(true);
         self.expand_all_dirs();
@@ -431,9 +427,7 @@ impl App {
 
         self.diff_files = parsed;
         self.clear_expanded_gaps();
-        // Range diffs can hide hunks that are still reviewed in the broader
-        // PR session, so registration must not prune them.
-        Self::register_diff_files(&mut self.session, &self.diff_files, true);
+        Self::register_diff_files(&mut self.session, &self.diff_files);
         self.sort_files_by_directory(true);
         self.expand_all_dirs();
         self.rebuild_annotations();

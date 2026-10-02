@@ -440,18 +440,13 @@ fn should_persist_full_local_reload_invalidation() {
     vcs.push_working_tree_diff(Ok(vec![changed]));
     let mut app = build_app_with_scripted_vcs(vec![initial.clone(), absent.clone()], vcs);
     let initial_keys = initial.hunk_review_keys();
-    let initial_review = app
-        .session
-        .files
-        .get_mut(initial.display_path())
-        .expect("file should be registered");
-    initial_review.reviewed = true;
-    initial_review.reviewed_hunks.extend(initial_keys.clone());
+    app.session.set_file_reviewed(initial.display_path(), true);
     app.session
-        .files
-        .get_mut(absent.display_path())
-        .expect("absent file should be registered")
-        .reviewed = true;
+        .get_file_mut(initial.display_path())
+        .expect("file should be registered")
+        .reviewed_hunks
+        .extend(initial_keys.clone());
+    app.session.set_file_reviewed(absent.display_path(), true);
     let path = app
         .save_current_session_merging_external()
         .expect("initial session should save");
@@ -474,10 +469,7 @@ fn should_persist_full_local_reload_invalidation() {
         .expect("persisted file should remain registered");
     assert_eq!(saved.content_hash, Some(2));
     assert!(!saved.reviewed);
-    assert_eq!(
-        saved.reviewed_hunks,
-        [initial_keys[0].clone()].into_iter().collect()
-    );
+    assert_eq!(saved.reviewed_hunks, initial_keys.iter().cloned().collect());
     let absent_saved = persisted
         .files
         .get(absent.display_path())
@@ -499,10 +491,7 @@ fn should_preserve_dirty_state_and_external_comment_during_manual_reload() {
         .save_current_session_merging_external()
         .expect("initial session should save");
     app.session
-        .files
-        .get_mut(initial_b.display_path())
-        .expect("file should be registered")
-        .reviewed = true;
+        .set_file_reviewed(initial_b.display_path(), true);
     app.dirty = true;
     let mut external =
         crate::persistence::storage::load_session(&path).expect("persisted session should load");
@@ -589,11 +578,7 @@ fn should_surface_persistence_failure_after_staging() {
     vcs.push_working_tree_diff(Ok(vec![changed]));
     let mut app = build_app_with_scripted_vcs(vec![initial.clone()], vcs);
     app.diff_source = DiffSource::Unstaged;
-    app.session
-        .files
-        .get_mut(initial.display_path())
-        .expect("file should be registered")
-        .reviewed = true;
+    app.session.set_file_reviewed(initial.display_path(), true);
     app.save_current_session_merging_external()
         .expect("initial session should save");
     reviews.fail_writes();

@@ -438,12 +438,7 @@ impl App {
         repo_url_override: Option<ForgeRepository>,
     ) -> Result<Self> {
         let persisted_session_snapshot = session.clone();
-        // Ensure all diff files are registered in the session. Persisted PR
-        // subsets hydrate through the full PR diff first; keep subset-specific
-        // hunk keys alive until the selected diff is loaded.
-        let preserve_hunks = matches!(diff_source, DiffSource::PullRequest(_))
-            && session.commit_selection_range.is_some();
-        Self::register_diff_files(&mut session, &diff_files, preserve_hunks);
+        Self::register_diff_files(&mut session, &diff_files);
 
         let has_more_commit = commit_list.len() >= VISIBLE_COMMIT_COUNT;
         let visible_commit_count = if commit_list.is_empty() {
@@ -794,14 +789,9 @@ impl App {
     pub(in crate::app) fn register_diff_files(
         session: &mut ReviewSession,
         diff_files: &[DiffFile],
-        preserve_hunks: bool,
     ) {
         for file in diff_files {
-            if preserve_hunks {
-                session.add_diff_file_preserving_hunks(file);
-            } else {
-                session.add_diff_file(file);
-            }
+            session.add_diff_file(file);
         }
     }
 

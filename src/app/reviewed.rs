@@ -326,8 +326,8 @@ impl App {
         };
 
         self.revealed_reviewed_file = None;
-        if let Some(review) = self.session.get_file_mut(&path) {
-            review.reviewed = !review.reviewed;
+        if let Some(reviewed) = self.session.files.get(&path).map(|r| !r.reviewed) {
+            self.session.set_file_reviewed(&path, reviewed);
             self.dirty = true;
 
             // Update current_file_idx before rebuilding annotations:
@@ -539,12 +539,6 @@ impl App {
     /// Reviewed files within the population `file_count()` reports, so the two
     /// always form a coherent fraction.
     pub fn reviewed_count(&self) -> usize {
-        if !self.file_filter_active() {
-            return self.session.reviewed_count();
-        }
-        // Counting the whole session here would read as `12/5` next to a
-        // filtered total, so count only reviewed files that survive the
-        // patterns. Hiding them does not remove them from the count.
         self.diff_files
             .iter()
             .filter(|file| {

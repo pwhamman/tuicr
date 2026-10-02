@@ -1140,7 +1140,7 @@ fn should_load_persisted_pr_session_when_reopening_same_head() {
         two_file_patch("new changed"),
     ));
     app.open_pr_with_backend(&summary, backend, None).unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
     app.session
         .get_file_mut(&stable_path)
         .unwrap()
@@ -1183,8 +1183,8 @@ fn should_keep_saved_pr_session_through_quit_reopen_and_same_head_reload() {
         two_file_patch("new changed"),
     ));
     app.open_pr_with_backend(&summary, backend, None).unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
-    app.session.get_file_mut(&changed_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
     app.session
         .get_file_mut(&stable_path)
         .unwrap()
@@ -1259,7 +1259,7 @@ fn should_reindex_recovered_pr_session() {
         two_file_patch("new changed"),
     ));
     app.open_pr_with_backend(&summary, backend_a, None).unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
 
     // and a previously saved session file already exists for the new head
     let mut details_b = details_a.clone();
@@ -1276,7 +1276,7 @@ fn should_reindex_recovered_pr_session() {
     )
     .unwrap();
     let mut persisted_b = opened_b.session.clone();
-    persisted_b.get_file_mut(&changed_path).unwrap().reviewed = true;
+    persisted_b.set_file_reviewed(&changed_path, true);
     persisted_b
         .get_file_mut(&changed_path)
         .unwrap()
@@ -1370,8 +1370,8 @@ fn should_keep_old_head_session_when_new_head_session_file_is_corrupt() {
         two_file_patch("new changed"),
     ));
     app.open_pr_with_backend(&summary, backend_a, None).unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
-    app.session.get_file_mut(&changed_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
 
     // and the deterministic file for the new head is corrupt
     let mut details_b = details_a.clone();
@@ -1421,7 +1421,7 @@ fn should_keep_old_head_session_when_saving_before_head_switch_fails() {
         two_file_patch("new changed"),
     ));
     app.open_pr_with_backend(&summary, backend_a, None).unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
 
     // and the review storage root has become unusable.
     let blocked_dir = tempfile::tempdir().unwrap();
@@ -1476,7 +1476,7 @@ fn should_ignore_exact_session_file_when_pr_session_key_does_not_match() {
         details.number,
         "bbbbbbbbbbbbbbbb".to_string(),
     ));
-    mismatched.get_file_mut(&stable_path).unwrap().reviewed = true;
+    mismatched.set_file_reviewed(&stable_path, true);
     mismatched
         .get_file_mut(&stable_path)
         .unwrap()
@@ -1527,7 +1527,7 @@ fn should_ignore_manifest_session_when_pr_session_key_does_not_match() {
         details.number,
         "bbbbbbbbbbbbbbbb".to_string(),
     ));
-    mismatched.get_file_mut(&stable_path).unwrap().reviewed = true;
+    mismatched.set_file_reviewed(&stable_path, true);
     mismatched
         .get_file_mut(&stable_path)
         .unwrap()
@@ -1575,7 +1575,7 @@ fn should_leave_next_session_unchanged_when_carry_forward_has_no_matching_file()
         SessionDiffSource::PullRequest,
     );
     let mut next = app.session.clone();
-    next.get_file_mut(&stable_path).unwrap().reviewed = true;
+    next.set_file_reviewed(&stable_path, true);
 
     // when carry-forward has no matching previous file or diff file
     let carried_without_previous =
@@ -1593,10 +1593,7 @@ fn should_leave_next_session_unchanged_when_carry_forward_has_no_matching_file()
         stable_path.clone(),
         crate::model::review::FileReview::new(stable_path.clone(), FileStatus::Modified, 1),
     );
-    previous_with_reviewed_file
-        .get_file_mut(&stable_path)
-        .unwrap()
-        .reviewed = true;
+    previous_with_reviewed_file.set_file_reviewed(&stable_path, true);
     let mut fresh_next = next;
     fresh_next.get_file_mut(&stable_path).unwrap().reviewed = false;
     let carried_without_diff =
@@ -1619,8 +1616,8 @@ fn should_carry_draft_comments_for_unchanged_files_when_pr_head_advances() {
         two_file_patch("new changed"),
     ));
     app.open_pr_with_backend(&summary, backend_a, None).unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
-    app.session.get_file_mut(&changed_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
     app.session.review_comments.push(Comment::new(
         "review-level draft".to_string(),
         CommentType::from_id("note"),
@@ -1690,8 +1687,8 @@ fn should_carry_reviewed_marks_for_unchanged_files_when_pr_head_advances() {
     app.open_pr_with_backend(&summary, backend_a, None).unwrap();
     let stable_path = PathBuf::from("src/stable.rs");
     let changed_path = PathBuf::from("src/changed.rs");
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
-    app.session.get_file_mut(&changed_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
     app.session
         .get_file_mut(&stable_path)
         .unwrap()
@@ -1758,8 +1755,8 @@ fn should_build_new_head_session_by_carrying_only_unchanged_reviewed_state() {
         .find(|file| file.display_path() == &changed_path)
         .and_then(|file| file.hunk_review_key(0))
         .unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
-    app.session.get_file_mut(&changed_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
     app.session
         .get_file_mut(&stable_path)
         .unwrap()
@@ -1816,7 +1813,7 @@ fn should_carry_unchanged_hunk_marks_inside_changed_file_when_pr_head_advances()
     let path = PathBuf::from("src/multi.rs");
     let first_key = app.diff_files[0].hunk_review_key(0).unwrap();
     let second_key = app.diff_files[0].hunk_review_key(1).unwrap();
-    app.session.get_file_mut(&path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&path, true);
     app.session
         .get_file_mut(&path)
         .unwrap()
@@ -1870,8 +1867,8 @@ fn should_carry_reviewed_state_through_finish_pr_reload_when_head_advances() {
     app.open_pr_with_backend(&summary, backend_a, None).unwrap();
     let stable_path = PathBuf::from("src/stable.rs");
     let changed_path = PathBuf::from("src/changed.rs");
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
-    app.session.get_file_mut(&changed_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
     let request = PrReloadRequest {
         repository: details_a.repository.clone(),
         pr_number: details_a.number,
@@ -1918,7 +1915,7 @@ fn should_keep_reviewed_state_through_finish_pr_reload_when_head_unchanged() {
         .find(|file| file.display_path() == &stable_path)
         .and_then(|file| file.hunk_review_key(0))
         .unwrap();
-    app.session.get_file_mut(&stable_path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&stable_path, true);
     app.session
         .get_file_mut(&stable_path)
         .unwrap()
@@ -2108,7 +2105,7 @@ fn should_quit_on_q_when_only_reviewed_files_dirty() {
     let mut app = build_app();
     let path = PathBuf::from("src/main.rs");
     app.session.add_file(path.clone(), FileStatus::Modified, 0);
-    app.session.get_file_mut(&path).unwrap().reviewed = true;
+    app.session.set_file_reviewed(&path, true);
     app.dirty = true;
     assert!(!app.session.has_comments());
     app.command_buffer = "q".to_string();

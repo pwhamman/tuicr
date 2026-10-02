@@ -305,7 +305,7 @@ fn hunk_navigation_crosses_asymmetric_files_with_hidden_middle_file() {
         let mut app = build_app_with_files(files, 100);
         app.diff_view_mode = mode;
         let hidden = app.diff_files[1].display_path().clone();
-        app.session.get_file_mut(&hidden).unwrap().reviewed = true;
+        app.session.set_file_reviewed(&hidden, true);
         app.set_show_reviewed(false);
         let last_path = app.diff_files[2].display_path().clone();
         app.session

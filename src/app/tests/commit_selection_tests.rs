@@ -736,3 +736,80 @@ fn should_comment_on_the_commit_message_of_a_commit_chosen_from_the_target_selec
         saved.err()
     );
 }
+
+fn file_version(path: &Path, content_hash: u64, hunks: Vec<DiffHunk>) -> DiffFile {
+    DiffFile {
+        content_hash,
+        ..commit_only_file(path, hunks)
+    }
+}
+
+fn two_commit_app(path: &Path) -> App {
+    let mut app = build_app(vec![normal_commit("c2"), normal_commit("c1")]);
+    app.review_commits = app.commit_list.clone();
+    app.commit_diff_cache
+        .insert((0, 0), vec![file_version(path, 11, vec![one_line_hunk()])]);
+    app.commit_diff_cache
+        .insert((1, 1), vec![file_version(path, 22, Vec::new())]);
+    app.range_diff_files = Some(vec![file_version(path, 33, vec![one_line_hunk()])]);
+    app
+}
+
+fn select_commits(app: &mut App, range: (usize, usize)) {
+    app.commit_selection_range = Some(range);
+    app.reload_inline_selection()
+        .expect("reload should succeed");
+}
+
+#[test]
+fn should_keep_a_file_mark_per_commit_when_stepping_between_single_commits() {
+    let path = PathBuf::from("f.txt");
+    let mut app = two_commit_app(&path);
+
+    select_commits(&mut app, (0, 0));
+    app.toggle_reviewed_for_file_idx(loaded_file_idx(&app, &path), true);
+    assert!(app.session.is_file_reviewed(&path));
+
+    select_commits(&mut app, (1, 1));
+    assert!(!app.session.is_file_reviewed(&path));
+
+    select_commits(&mut app, (0, 0));
+    assert!(app.session.is_file_reviewed(&path));
+    assert_eq!(app.session.reviewed_patches.len(), 1);
+}
+
+#[test]
+fn should_keep_a_hunk_mark_made_in_a_single_commit_after_viewing_the_full_range() {
+    let path = PathBuf::from("f.txt");
+    let mut app = two_commit_app(&path);
+
+    select_commits(&mut app, (0, 0));
+    let file_idx = loaded_file_idx(&app, &path);
+    let key = app.diff_files[file_idx].hunk_review_key(0).unwrap();
+    app.diff_state.cursor_line = app.hunk_header_line(file_idx, 0).unwrap();
+    app.toggle_hunk_reviewed();
+    assert!(app.session.is_hunk_reviewed(&path, &key));
+
+    select_commits(&mut app, (0, 1));
+    select_commits(&mut app, (0, 0));
+
+    assert!(app.session.is_hunk_reviewed(&path, &key));
+    assert!(app.is_hunk_reviewed(loaded_file_idx(&app, &path), 0));
+}
+
+#[test]
+fn should_count_only_displayed_files_in_the_reviewed_counter() {
+    let path = PathBuf::from("f.txt");
+    let other = PathBuf::from("g.txt");
+    let mut app = two_commit_app(&path);
+    app.commit_diff_cache
+        .insert((1, 1), vec![file_version(&other, 44, Vec::new())]);
+
+    select_commits(&mut app, (0, 0));
+    app.toggle_reviewed_for_file_idx(loaded_file_idx(&app, &path), true);
+    assert_eq!(app.reviewed_count(), 1);
+
+    select_commits(&mut app, (1, 1));
+    assert_eq!(app.session.reviewed_count(), 1);
+    assert_eq!(app.reviewed_count(), 0);
+}

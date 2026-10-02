@@ -265,11 +265,11 @@ impl App {
             }
 
             let base_reviewed = base.files.get(path).map(|review| review.reviewed);
-            if let Some(current_review) = current.files.get_mut(path)
+            if let Some(current_review) = current.files.get(path)
                 && Some(current_review.reviewed) == base_reviewed
                 && current_review.reviewed != latest_review.reviewed
             {
-                current_review.reviewed = latest_review.reviewed;
+                current.set_file_reviewed(path, latest_review.reviewed);
                 changed += 1;
             }
         }
@@ -575,13 +575,7 @@ impl App {
         // Re-register diff files against the loaded session so any new files
         // in the PR appear with content_hash tracking, and any deleted files
         // simply stop appearing in the file list.
-        // Strict subset sessions are reloaded through a full PR diff first, so
-        // pruning here would discard hunk keys hidden by the active selector.
-        let preserve_hunks = Self::is_strict_commit_selection(
-            persisted.commit_selection_range,
-            opened.commits.len(),
-        );
-        Self::register_diff_files(&mut persisted, &opened.diff_files, preserve_hunks);
+        Self::register_diff_files(&mut persisted, &opened.diff_files);
         Ok(Some(ReviewSession {
             pr_session_key: Some(key),
             diff_source: SessionDiffSource::PullRequest,
@@ -640,9 +634,11 @@ impl App {
             .filter(|comment| !comment.is_locked())
             .cloned()
             .collect();
+        let reviewed_patches = previous.reviewed_patches.clone();
 
         ReviewSession {
             files,
+            reviewed_patches,
             review_comments,
             ..next
         }

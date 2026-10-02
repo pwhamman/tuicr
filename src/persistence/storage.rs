@@ -490,7 +490,10 @@ fn read_lock_owner_pid(path: &Path) -> Option<u32> {
 /// Load a session JSON file from an absolute path.
 pub fn load_session(path: &Path) -> Result<ReviewSession> {
     let contents = fs::read_to_string(path)?;
-    serde_json::from_str(&contents).map_err(|e| TuicrError::CorruptedSession(e.to_string()))
+    let mut session: ReviewSession =
+        serde_json::from_str(&contents).map_err(|e| TuicrError::CorruptedSession(e.to_string()))?;
+    session.normalize_legacy_marks();
+    Ok(session)
 }
 
 /// Look up the persisted local session that matches the requested context.

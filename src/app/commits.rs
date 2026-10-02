@@ -1096,12 +1096,7 @@ impl App {
         // Register the files in the session. `r`, `R` and the comment path all
         // look a file up here, so a file reachable only through a narrowed
         // commit selection could not be marked reviewed or commented on.
-        //
-        // Hunk marks are preserved rather than pruned, for the same reason
-        // `reload_pr_inline_selection` preserves them: a narrowed selection is
-        // a partial view of a wider review, and hunks it does not show are
-        // still reviewed in that wider scope.
-        Self::register_diff_files(&mut self.session, &self.diff_files, true);
+        Self::register_diff_files(&mut self.session, &self.diff_files);
 
         // Reset navigation, rebuild file tree + annotations
         let wrap = self.diff_state.wrap_lines;
