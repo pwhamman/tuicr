@@ -497,3 +497,38 @@ fn should_hide_sessions_with_no_review_progress() {
         "a session with no comments and no reviewed files holds no progress"
     );
 }
+
+#[test]
+fn should_show_mark_on_rebased_range_with_new_commit_ids_and_same_patch() {
+    // given a saved range review on branch feat with f.txt marked reviewed
+    let _reviews = TestReviewsDir::new();
+    let repo = tempfile::tempdir().unwrap();
+    let vcs_info = VcsInfo {
+        root_path: repo.path().to_path_buf(),
+        head_commit: "b2".to_string(),
+        branch_name: Some("feat".to_string()),
+        vcs_type: VcsType::Git,
+    };
+    let old_ids = vec!["a1".to_string(), "a2".to_string()];
+    let mut old = App::load_or_create_commit_range_session(&vcs_info, &old_ids);
+    let mut file = diff_file("f.txt");
+    file.content_hash = 42;
+    old.add_diff_file(&file);
+    old.set_file_reviewed(&PathBuf::from("f.txt"), true);
+    crate::persistence::save_session(&old).unwrap();
+
+    // when the branch is rebased: new commit ids, identical patch
+    let new_ids = vec!["b1".to_string(), "b2".to_string()];
+    let mut rebased = App::load_or_create_commit_range_session(&vcs_info, &new_ids);
+    rebased.add_diff_file(&file);
+
+    // then it is a new session that shows the file reviewed
+    assert_ne!(rebased.id, old.id);
+    assert_eq!(rebased.commit_range, Some(new_ids));
+    assert!(rebased.files.get(&PathBuf::from("f.txt")).unwrap().reviewed);
+
+    // and a changed patch is not shown reviewed
+    file.content_hash = 43;
+    rebased.add_diff_file(&file);
+    assert!(!rebased.files.get(&PathBuf::from("f.txt")).unwrap().reviewed);
+}

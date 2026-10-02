@@ -981,6 +981,12 @@ impl App {
                 SessionDiffSource::CommitRange,
             );
             session.commit_range = Some(selected_ids.clone());
+            Self::inherit_local_marks(
+                &mut session,
+                &self.vcs_info,
+                SessionDiffSource::CommitRange,
+                Some(selected_ids.as_slice()),
+            );
             session
         });
 

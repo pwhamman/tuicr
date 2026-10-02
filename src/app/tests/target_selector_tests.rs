@@ -1169,6 +1169,51 @@ fn should_load_persisted_pr_session_when_reopening_same_head() {
 }
 
 #[test]
+fn should_inherit_marks_for_unchanged_files_when_pr_is_opened_at_a_new_head() {
+    // given a saved review of a PR at an old head with both files marked reviewed
+    let _reviews = TestReviewsDir::new();
+    let mut app = build_app();
+    let summary = sample_pr(424250, "force-push");
+    let mut details_a = test_pr_details(424250, "force-push");
+    details_a.head_sha = "aaaaaaaaaaaaaaaa".to_string();
+    let backend = Box::new(FakeForgeBackend::open_pr_details(
+        details_a.clone(),
+        two_file_patch("new changed"),
+    ));
+    app.open_pr_with_backend(&summary, backend, None).unwrap();
+    let stable_path = PathBuf::from("src/stable.rs");
+    let changed_path = PathBuf::from("src/changed.rs");
+    app.session.set_file_reviewed(&stable_path, true);
+    app.session.set_file_reviewed(&changed_path, true);
+    crate::persistence::save_session(&app.session).unwrap();
+
+    // when a fresh app opens the PR at a moved head where one file changed
+    let mut details_b = details_a;
+    details_b.head_sha = "bbbbbbbbbbbbbbbb".to_string();
+    let mut reopened = build_app();
+    let backend = Box::new(FakeForgeBackend::open_pr_details(
+        details_b,
+        two_file_patch("newer changed"),
+    ));
+    reopened
+        .open_pr_with_backend(&summary, backend, None)
+        .unwrap();
+
+    // then the unchanged file shows reviewed and the changed file does not
+    assert_eq!(
+        reopened
+            .session
+            .pr_session_key
+            .as_ref()
+            .map(|k| k.head_sha.as_str()),
+        Some("bbbbbbbbbbbbbbbb")
+    );
+    assert!(reopened.session.files.get(&stable_path).unwrap().reviewed);
+    assert!(!reopened.session.files.get(&changed_path).unwrap().reviewed);
+    assert_eq!(reopened.session.reviewed_count(), 1);
+}
+
+#[test]
 fn should_keep_saved_pr_session_through_quit_reopen_and_same_head_reload() {
     // given a saved PR session with all files reviewed and local comments
     let _reviews = TestReviewsDir::new();
@@ -1789,12 +1834,10 @@ fn should_build_new_head_session_by_carrying_only_unchanged_reviewed_state() {
     assert!(next.is_file_reviewed(&stable_path));
     assert!(next.is_hunk_reviewed(&stable_path, &stable_key));
     assert!(!next.is_file_reviewed(&changed_path));
-    assert!(
-        next.files
-            .get(&changed_path)
-            .unwrap()
-            .reviewed_hunks
-            .is_empty()
+    assert_eq!(
+        next.files.get(&changed_path).unwrap().reviewed_hunks.len(),
+        1,
+        "content-keyed hunk marks are kept, never pruned"
     );
 }
 

@@ -664,6 +664,81 @@ pub fn load_pr_session(key: &PrSessionKey) -> Result<Option<(PathBuf, ReviewSess
     }
 }
 
+/// Newest persisted PR session for the same repository and number, whatever
+/// its head. Excludes the session for `key`'s exact head. PR slugs hold one
+/// manifest entry (the latest head), so this is that entry unless it is the
+/// current head.
+pub fn load_previous_pr_session(key: &PrSessionKey) -> Result<Option<ReviewSession>> {
+    let reviews_dir = get_reviews_dir()?;
+    maybe_migrate(&reviews_dir)?;
+
+    let slug: Slug = key.into();
+    let manifest = manifest::load_manifest(&reviews_dir).unwrap_or_default();
+    let Some(entry) = manifest.get_pr(&slug.to_string()) else {
+        return Ok(None);
+    };
+    match &entry.kind {
+        ManifestKind::Pr { head_sha, .. } if head_sha != &key.head_sha => {
+            load_session(&reviews_dir.join(&entry.path)).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Newest persisted local session for the same checkout, branch and diff
+/// source kind, whatever its head or commit range. Excludes the session whose
+/// slug the given inputs produce. Detached heads (`branch_name` of `None`)
+/// never match.
+pub fn load_previous_local_session(
+    repo_path: &Path,
+    branch_name: Option<&str>,
+    head_commit: &str,
+    diff_source: SessionDiffSource,
+    commit_range: Option<&[String]>,
+) -> Result<Option<ReviewSession>> {
+    if branch_name.is_none() || matches!(diff_source, SessionDiffSource::PullRequest) {
+        return Ok(None);
+    }
+    let reviews_dir = get_reviews_dir()?;
+    maybe_migrate(&reviews_dir)?;
+
+    let owner_repo = slug::resolve_owner_repo(repo_path)
+        .map_err(|e| TuicrError::CorruptedSession(format!("slug derive: {e}")))?;
+    let current = slug::build_local_slug(
+        owner_repo,
+        branch_name,
+        head_commit,
+        diff_source,
+        commit_range,
+    )
+    .map_err(|e| TuicrError::CorruptedSession(format!("slug build: {e}")))?;
+
+    let manifest = manifest::load_manifest(&reviews_dir).unwrap_or_default();
+    let canonical = fs::canonicalize(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
+    let newest = manifest
+        .iter()
+        .filter(|(_, entry)| {
+            matches!(entry.kind, ManifestKind::Local)
+                && entry.canonical_repo_path.as_deref() == Some(canonical.as_path())
+        })
+        .filter_map(|(slug, entry)| match slug.parse::<Slug>() {
+            Ok(Slug::Local(local)) => Some((local, entry)),
+            _ => None,
+        })
+        .filter(|(local, _)| {
+            *local != current
+                && local.anchor == current.anchor
+                && local.owner == current.owner
+                && local.repo == current.repo
+                && std::mem::discriminant(&local.source) == std::mem::discriminant(&current.source)
+        })
+        .max_by_key(|(_, entry)| entry.updated_at);
+    match newest {
+        Some((_, entry)) => load_session(&reviews_dir.join(&entry.path)).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Derive the slug for a session from its embedded fields. Local sessions
 /// require resolving the repo's `origin` remote (I/O); PR sessions are
 /// derived purely from the embedded `pr_session_key`.
@@ -919,6 +994,111 @@ mod tests {
         );
         s.pr_session_key = Some(key.clone());
         s
+    }
+
+    // ---- Previous-session lookups ----
+
+    fn session_with_id(mut s: ReviewSession, id: &str) -> ReviewSession {
+        s.id = id.to_string();
+        s
+    }
+
+    #[test]
+    fn should_find_newest_pr_session_for_same_number_with_other_head() {
+        let _g = with_test_reviews_dir();
+        save_session(&make_pr_session(&make_pr_key(7, "old"))).unwrap();
+        save_session(&session_with_id(
+            make_pr_session(&make_pr_key(8, "other")),
+            "other-number",
+        ))
+        .unwrap();
+
+        let found = load_previous_pr_session(&make_pr_key(7, "new"))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(found.pr_session_key.unwrap().head_sha, "old");
+        assert!(
+            load_previous_pr_session(&make_pr_key(7, "old"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            load_previous_pr_session(&make_pr_key(9, "new"))
+                .unwrap()
+                .is_none()
+        );
+        let other_repo = PrSessionKey::new(
+            ForgeRepository::github("github.com", "someone", "else"),
+            7,
+            "new".to_string(),
+        );
+        assert!(load_previous_pr_session(&other_repo).unwrap().is_none());
+    }
+
+    #[test]
+    fn should_find_previous_local_session_on_same_branch_and_source() {
+        let _g = with_test_reviews_dir();
+        let repo = make_repo();
+        let old_range = Some(vec!["a1".to_string(), "a2".to_string()]);
+        let new_range = Some(vec!["b1".to_string(), "b2".to_string()]);
+        for (branch, range) in [
+            (Some("feat"), old_range.clone()),
+            (
+                Some("other"),
+                Some(vec!["c1".to_string(), "c2".to_string()]),
+            ),
+            (None, Some(vec!["d1".to_string(), "d2".to_string()])),
+        ] {
+            let s = make_local_session(
+                repo.clone(),
+                "x",
+                branch,
+                SessionDiffSource::CommitRange,
+                range,
+            );
+            save_session(&s).unwrap();
+        }
+
+        let found = load_previous_local_session(
+            &repo,
+            Some("feat"),
+            "b2",
+            SessionDiffSource::CommitRange,
+            new_range.as_deref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(found.commit_range, old_range);
+        assert_eq!(found.branch_name.as_deref(), Some("feat"));
+
+        let detached = load_previous_local_session(
+            &repo,
+            None,
+            "b2",
+            SessionDiffSource::CommitRange,
+            new_range.as_deref(),
+        )
+        .unwrap();
+        assert!(detached.is_none());
+        let other_source = load_previous_local_session(
+            &repo,
+            Some("feat"),
+            "b2",
+            SessionDiffSource::WorkingTree,
+            None,
+        )
+        .unwrap();
+        assert!(other_source.is_none());
+        let exact = load_previous_local_session(
+            &repo,
+            Some("feat"),
+            "a2",
+            SessionDiffSource::CommitRange,
+            old_range.as_deref(),
+        )
+        .unwrap();
+        assert!(exact.is_none());
     }
 
     // ---- Save/load round trips ----

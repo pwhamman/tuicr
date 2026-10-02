@@ -431,6 +431,29 @@ impl App {
         false
     }
 
+    /// Seeds a brand-new local session with the review marks of the previous
+    /// session on the same branch, so a rebase or new commit keeps marks on
+    /// patches that did not change.
+    pub(in crate::app) fn inherit_local_marks(
+        session: &mut ReviewSession,
+        vcs_info: &VcsInfo,
+        diff_source: SessionDiffSource,
+        commit_range: Option<&[String]>,
+    ) {
+        let head = commit_range
+            .and_then(|ids| ids.last())
+            .unwrap_or(&vcs_info.head_commit);
+        if let Ok(Some(previous)) = crate::persistence::load_previous_local_session(
+            &vcs_info.root_path,
+            vcs_info.branch_name.as_deref(),
+            head,
+            diff_source,
+            commit_range,
+        ) {
+            session.inherit_marks_from(&previous);
+        }
+    }
+
     /// Load or create a session for a commit range (used by revisions and commit selection).
     pub(in crate::app) fn load_or_create_commit_range_session(
         vcs_info: &VcsInfo,
@@ -455,6 +478,12 @@ impl App {
                 SessionDiffSource::CommitRange,
             );
             s.commit_range = Some(commit_ids.to_vec());
+            Self::inherit_local_marks(
+                &mut s,
+                vcs_info,
+                SessionDiffSource::CommitRange,
+                Some(commit_ids),
+            );
             s
         });
 
@@ -488,6 +517,12 @@ impl App {
                 SessionDiffSource::StagedUnstagedAndCommits,
             );
             s.commit_range = Some(commit_ids.to_vec());
+            Self::inherit_local_marks(
+                &mut s,
+                vcs_info,
+                SessionDiffSource::StagedUnstagedAndCommits,
+                Some(commit_ids),
+            );
             s
         });
 
@@ -503,12 +538,14 @@ impl App {
         diff_source: SessionDiffSource,
     ) -> ReviewSession {
         let new_session = || {
-            ReviewSession::new(
+            let mut session = ReviewSession::new(
                 vcs_info.root_path.clone(),
                 vcs_info.head_commit.clone(),
                 vcs_info.branch_name.clone(),
                 diff_source,
-            )
+            );
+            Self::inherit_local_marks(&mut session, vcs_info, diff_source, None);
+            session
         };
 
         let Ok(found) = load_latest_session_for_context(
@@ -589,8 +626,21 @@ impl App {
     ) -> Result<crate::forge::pr_open::OpenedPullRequest> {
         match Self::load_pr_session_for_opened(&opened)? {
             Some(session) => Ok(crate::forge::pr_open::OpenedPullRequest { session, ..opened }),
-            None => Ok(opened),
+            None => Ok(Self::opened_pr_inheriting_marks(opened)),
         }
+    }
+
+    /// A PR opened at a head with no saved session starts from the review
+    /// marks of the latest session for the same PR, so a force-push keeps
+    /// marks on patches that did not change.
+    fn opened_pr_inheriting_marks(
+        mut opened: crate::forge::pr_open::OpenedPullRequest,
+    ) -> crate::forge::pr_open::OpenedPullRequest {
+        if let Ok(Some(previous)) = crate::persistence::load_previous_pr_session(&opened.key) {
+            opened.session.inherit_marks_from(&previous);
+            Self::register_diff_files(&mut opened.session, &opened.diff_files);
+        }
+        opened
     }
 
     pub(in crate::app) fn opened_pr_with_new_head_session(
@@ -634,14 +684,14 @@ impl App {
             .filter(|comment| !comment.is_locked())
             .cloned()
             .collect();
-        let reviewed_patches = previous.reviewed_patches.clone();
-
-        ReviewSession {
+        let mut carried = ReviewSession {
             files,
-            reviewed_patches,
             review_comments,
             ..next
-        }
+        };
+        carried.inherit_marks_from(previous);
+        Self::register_diff_files(&mut carried, diff_files);
+        carried
     }
 
     fn file_review_carried_forward(
@@ -658,13 +708,6 @@ impl App {
         };
 
         let unchanged_file = previous_review.content_hash == Some(file.content_hash);
-        let valid_hunks: HashSet<_> = file.hunk_review_keys().into_iter().collect();
-        let reviewed_hunks = previous_review
-            .reviewed_hunks
-            .iter()
-            .filter(|key| valid_hunks.contains(*key))
-            .cloned()
-            .collect();
         let (file_comments, line_comments) = if unchanged_file {
             (
                 previous_review
@@ -682,8 +725,6 @@ impl App {
         (
             path,
             FileReview {
-                reviewed: unchanged_file && previous_review.reviewed,
-                reviewed_hunks,
                 file_comments,
                 line_comments,
                 ..review

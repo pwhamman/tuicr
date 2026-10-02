@@ -168,6 +168,35 @@ impl ReviewSession {
         }
     }
 
+    /// Carries review marks over from the previous session of the same
+    /// branch or PR. Only content-keyed marks move: whole-file patch marks and
+    /// hunk keys. Comments, notes and cached `reviewed` flags stay behind, so
+    /// the next `add_file` shows a file reviewed only if its patch is unchanged.
+    pub fn inherit_marks_from(&mut self, previous: &ReviewSession) {
+        self.reviewed_patches
+            .extend(previous.reviewed_patches.iter().cloned());
+        for (path, old) in &previous.files {
+            if old.reviewed_hunks.is_empty() {
+                continue;
+            }
+            let review = self
+                .files
+                .entry(path.clone())
+                .or_insert_with(|| FileReview {
+                    path: path.clone(),
+                    reviewed: false,
+                    status: old.status,
+                    file_comments: Vec::new(),
+                    line_comments: HashMap::new(),
+                    reviewed_hunks: BTreeSet::new(),
+                    content_hash: None,
+                });
+            review
+                .reviewed_hunks
+                .extend(old.reviewed_hunks.iter().cloned());
+        }
+    }
+
     /// Records the reviewed state of the file's current patch and refreshes the
     /// cached flag. Without a content hash only the flag is written.
     pub fn set_file_reviewed(&mut self, path: &PathBuf, reviewed: bool) {
@@ -1064,6 +1093,45 @@ mod tests {
         assert!(session.is_hunk_reviewed(&path, &updated_first_key));
         assert!(!session.is_hunk_reviewed(&path, &updated.hunk_review_key(1).unwrap()));
         assert!(!session.is_hunk_reviewed(&path, &updated_third_key));
+    }
+
+    #[test]
+    fn should_inherit_marks_without_comments_and_show_only_unchanged_patches_reviewed() {
+        let mut previous = test_session();
+        let same = PathBuf::from("same.rs");
+        let edited = PathBuf::from("edited.rs");
+        previous.add_file(same.clone(), FileStatus::Modified, 11);
+        previous.add_file(edited.clone(), FileStatus::Modified, 22);
+        previous.set_file_reviewed(&same, true);
+        previous.set_file_reviewed(&edited, true);
+        previous.review_comments.push(Comment::new(
+            "keep out".to_string(),
+            CommentType::from_id("note"),
+            None,
+        ));
+        previous.session_notes = Some("notes".to_string());
+        previous
+            .get_file_mut(&edited)
+            .unwrap()
+            .toggle_hunk_reviewed("hunk-a".to_string());
+
+        let mut next = test_session();
+        next.inherit_marks_from(&previous);
+
+        assert_eq!(next.reviewed_patches.len(), 2);
+        assert!(next.review_comments.is_empty());
+        assert_eq!(next.session_notes, None);
+        let inherited = next.files.get(&edited).unwrap();
+        assert_eq!(inherited.reviewed_hunks.len(), 1);
+        assert!(!inherited.reviewed);
+        assert_eq!(inherited.content_hash, None);
+        assert!(!next.files.contains_key(&same));
+
+        next.add_file(same.clone(), FileStatus::Modified, 11);
+        next.add_file(edited.clone(), FileStatus::Modified, 23);
+        assert!(next.files.get(&same).unwrap().reviewed);
+        assert!(!next.files.get(&edited).unwrap().reviewed);
+        assert_eq!(next.reviewed_count(), 1);
     }
 
     #[test]
