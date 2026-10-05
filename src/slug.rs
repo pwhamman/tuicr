@@ -444,10 +444,20 @@ impl RepoCoordinate {
             return false;
         }
         match (self.owner.as_deref(), candidate.owner.as_deref()) {
-            (Some(target), Some(actual)) => target.eq_ignore_ascii_case(actual),
+            (Some(target), Some(actual)) => owners_match(target, actual),
             _ => true,
         }
     }
+}
+
+/// GitLab subgroups give PR sessions a multi-segment owner
+/// (`group/subgroup`), while a remote URL or `owner/repo` selector often only
+/// yields the last segment. Owners match when they are equal or one is the
+/// other's trailing segments.
+fn owners_match(a: &str, b: &str) -> bool {
+    let a = a.to_ascii_lowercase();
+    let b = b.to_ascii_lowercase();
+    a == b || a.ends_with(&format!("/{b}")) || b.ends_with(&format!("/{a}"))
 }
 
 // ----- Derivation from local session inputs -----
@@ -612,6 +622,25 @@ fn range_from(
 mod tests {
     use super::*;
     use crate::forge::traits::ForgeRepository;
+
+    #[test]
+    fn should_match_a_gitlab_subgroup_owner_against_its_last_segment() {
+        let session = RepoCoordinate {
+            owner: Some("zapier/team-software-factory".to_string()),
+            repo: "pieter-experiments".to_string(),
+        };
+        let checkout = RepoCoordinate {
+            owner: Some("team-software-factory".to_string()),
+            repo: "pieter-experiments".to_string(),
+        };
+        let other = RepoCoordinate {
+            owner: Some("software-factory".to_string()),
+            repo: "pieter-experiments".to_string(),
+        };
+        assert!(checkout.matches(&session));
+        assert!(session.matches(&checkout));
+        assert!(!other.matches(&session));
+    }
 
     // ---------- Display ----------
 
@@ -1168,7 +1197,10 @@ mod tests {
         let selector = coord(Some("myorg/myproject"), "myrepo");
         assert!(selector.matches(&RepoCoordinate::from_slug(&azure)));
         assert!(RepoCoordinate::from_slug(&azure).matches(&selector));
-        assert!(!selector.matches(&coord(Some("myproject"), "myrepo")));
+        // Fork: a trailing owner segment matches, so a GitLab subgroup checkout
+        // finds its sessions. A different trailing segment still does not.
+        assert!(selector.matches(&coord(Some("myproject"), "myrepo")));
+        assert!(!selector.matches(&coord(Some("otherproject"), "myrepo")));
     }
 
     #[test]
