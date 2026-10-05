@@ -277,6 +277,24 @@ pub enum ReviewCommand {
         repo: PathBuf,
     },
 
+    /// Report whether each commit's file patches are marked reviewed in any
+    /// saved session of a checkout.
+    Status {
+        /// Checkout path. Local sessions for it and PR sessions for its
+        /// origin repo are searched.
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        repo: PathBuf,
+
+        /// Comma-separated commit SHAs, full or short.
+        #[arg(
+            long,
+            value_name = "SHA[,SHA...]",
+            value_delimiter = ',',
+            required = true
+        )]
+        commits: Vec<String>,
+    },
+
     /// Delete one local draft comment from a persisted session.
     Delete {
         /// Session slug from `tuicr review list` (local or PR), or path to a

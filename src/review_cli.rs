@@ -12,10 +12,12 @@ use crate::error::{Result, TuicrError};
 use crate::model::comment::{self, CommentLifecycleState};
 use crate::model::{ClearScope, Comment, CommentType, LineRange, LineSide, ReviewSession};
 use crate::persistence::storage;
+use crate::review_status;
 use crate::review_store::{
     AddCommentRequest, CommentTarget, ReviewStore, SessionRef, SessionSummary,
 };
 use crate::slug::Slug;
+use crate::vcs::GitBackendPreference;
 
 pub fn run(command: ReviewCommand) -> Result<()> {
     let mut stdout = io::stdout();
@@ -52,6 +54,7 @@ fn run_with_writer(command: ReviewCommand, out: &mut impl Write) -> Result<()> {
             out,
         ),
         ReviewCommand::Comments { session, repo } => show_comments(&session, &repo, out),
+        ReviewCommand::Status { repo, commits } => show_status(&repo, &commits, out),
         ReviewCommand::Delete {
             session,
             comment_id,
@@ -115,6 +118,18 @@ fn list_sessions(repo: &Path, all: bool, out: &mut impl Write) -> Result<()> {
         .map(SessionSummaryOutput::from)
         .collect();
     serde_json::to_writer_pretty(&mut *out, &output)?;
+    writeln!(out)?;
+    Ok(())
+}
+
+fn show_status(repo: &Path, commits: &[String], out: &mut impl Write) -> Result<()> {
+    let outcome = config::load_config().ok();
+    let config = outcome.as_ref().and_then(|o| o.config.as_ref());
+    let preference = GitBackendPreference::from_config(config.and_then(|c| c.backend.as_deref()));
+    let whitespace = config::diff_whitespace_mode(config);
+    let statuses =
+        review_status::commit_statuses(&ReviewStore::new(), repo, commits, preference, whitespace)?;
+    serde_json::to_writer_pretty(&mut *out, &statuses)?;
     writeln!(out)?;
     Ok(())
 }

@@ -7,6 +7,8 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
+use crate::vcs::{DiffWhitespaceMode, WhitespaceAutoPolicy};
+
 /// Parsed `ignore_whitespace` setting.
 ///
 /// Booleans keep the legacy global modes. `"auto"` selects per-extension
@@ -304,6 +306,20 @@ const EXPORT_KNOWN_KEYS: &[&str] = &[
 pub struct ConfigLoadOutcome {
     pub config: Option<AppConfig>,
     pub warnings: Vec<String>,
+}
+
+/// Diff whitespace comparison selected by the `ignore_whitespace` config key.
+pub fn diff_whitespace_mode(config: Option<&AppConfig>) -> DiffWhitespaceMode {
+    let Some(cfg) = config else {
+        return DiffWhitespaceMode::Normal;
+    };
+    match cfg.ignore_whitespace {
+        Some(IgnoreWhitespaceConfig::Auto) => DiffWhitespaceMode::Auto(
+            WhitespaceAutoPolicy::with_overrides(cfg.ignore_whitespace_overrides.clone()),
+        ),
+        Some(IgnoreWhitespaceConfig::Bool(true)) => DiffWhitespaceMode::IgnoreAll,
+        Some(IgnoreWhitespaceConfig::Bool(false)) | None => DiffWhitespaceMode::Normal,
+    }
 }
 
 pub fn config_path() -> Result<PathBuf> {

@@ -214,7 +214,7 @@ impl App {
         Self::require_non_empty_diff_files(diff_files)
     }
 
-    pub(in crate::app) fn get_commit_range_diff_with_ignore(
+    pub(crate) fn get_commit_range_diff_with_ignore(
         vcs: &dyn VcsBackend,
         repo_root: &Path,
         revision_range: &ResolvedRevisionRange<'_>,

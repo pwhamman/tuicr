@@ -14,6 +14,7 @@ pub mod persistence;
 pub mod process;
 pub mod profile;
 pub mod review_cli;
+pub mod review_status;
 pub mod review_store;
 pub mod slug;
 pub mod syntax;
