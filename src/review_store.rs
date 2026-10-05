@@ -121,6 +121,28 @@ impl ReviewStore {
         Ok(counts)
     }
 
+    /// Newest other local session on the same checkout, branch and diff
+    /// source kind as the given range. The one review marks are inherited from.
+    pub fn previous_local_session(
+        &self,
+        repo: &Path,
+        branch_name: Option<&str>,
+        diff_source: crate::model::SessionDiffSource,
+        commit_range: &[String],
+    ) -> Result<Option<ReviewSession>> {
+        let Some(head) = commit_range.last() else {
+            return Ok(None);
+        };
+        storage::load_previous_local_session_in_dir(
+            &self.reviews_dir()?,
+            repo,
+            branch_name,
+            head,
+            diff_source,
+            Some(commit_range),
+        )
+    }
+
     /// Save a session through this store's storage root.
     pub fn save_review(&self, session: &ReviewSession) -> Result<SessionRef> {
         let reviews_dir = self.reviews_dir()?;

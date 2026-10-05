@@ -1105,12 +1105,18 @@ impl App {
             }
         };
 
-        self.diff_files = diff_files;
+        // Range-diff entries are not patches of the repository, so they never
+        // enter the session: `r`, `R` and comments find no file for them.
+        let since_files = self.since_review_files(start, end);
+        self.since_review_showing = since_files.is_some();
+        self.diff_files = since_files.unwrap_or(diff_files);
 
         // Register the files in the session. `r`, `R` and the comment path all
         // look a file up here, so a file reachable only through a narrowed
         // commit selection could not be marked reviewed or commented on.
-        Self::register_diff_files(&mut self.session, &self.diff_files);
+        if !self.since_review_showing {
+            Self::register_diff_files(&mut self.session, &self.diff_files);
+        }
 
         // Reset navigation, rebuild file tree + annotations
         let wrap = self.diff_state.wrap_lines;
@@ -1119,7 +1125,9 @@ impl App {
         self.file_list_state = FileListState::default();
         self.expanded_top.clear();
         self.expanded_bottom.clear();
-        self.insert_commit_message_if_single();
+        if !self.since_review_showing {
+            self.insert_commit_message_if_single();
+        }
         self.sort_files_by_directory(true);
         self.expand_all_dirs();
         self.rebuild_annotations();

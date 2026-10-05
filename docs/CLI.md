@@ -19,6 +19,7 @@ Related references: [CONFIG.md](CONFIG.md) for the config file and themes,
 | `tuicr review list` | List persisted review sessions |
 | `tuicr review add` | Add a local draft comment to a session |
 | `tuicr review comments` (`tuicr review get`) | Print a session's comments |
+| `tuicr review status --commits <sha,...>` | Report review marks and `since_review` per commit |
 | `tuicr update [VERSION]` | Update the installed binary |
 
 `mr` is an alias of `pr`, and `get` an alias of `comments`; they behave

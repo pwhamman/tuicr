@@ -8,6 +8,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::app::{STAGED_SELECTION_ID, UNSTAGED_SELECTION_ID};
+use crate::since_review::SinceReview;
 use crate::theme::Theme;
 use crate::ui::styles;
 use crate::ui::text_utils::{truncate_or_pad, truncate_str};
@@ -29,6 +30,7 @@ const AUTHOR_COL_WIDTH: usize = 12;
 const CONTROL_COL_WIDTH: usize = 8;
 const HASH_COL_WIDTH: usize = 8;
 const RELATIVE_DATE_COL_WIDTH: usize = 8; // "just now"
+const SINCE_REVIEW_COL_WIDTH: usize = 11; // "unchanged" plus padding
 const METADATA_COL_WIDTH: usize = 2 + AUTHOR_COL_WIDTH + 3 + RELATIVE_DATE_COL_WIDTH;
 
 pub struct CommitRowSpec<'a> {
@@ -37,6 +39,9 @@ pub struct CommitRowSpec<'a> {
     pub is_cursor: bool,
     pub is_selected: bool,
     pub is_reviewed: bool,
+    /// How the commit compares with its reviewed version. Present for every
+    /// row of a pane or for none, so the tag column stays aligned.
+    pub since_review: Option<SinceReview>,
     pub theme: &'a Theme,
 }
 
@@ -118,8 +123,15 @@ pub fn render_commit_row<'a>(spec: &CommitRowSpec<'a>) -> Line<'a> {
         when
     );
     let hash_col_width = hash_content_width + 1;
-    let (branch_col_width, summary_col_width) =
-        commit_column_widths(spec.available_width as usize, hash_col_width);
+    let tag_width = if spec.since_review.is_some() {
+        SINCE_REVIEW_COL_WIDTH
+    } else {
+        0
+    };
+    let (branch_col_width, summary_col_width) = commit_column_widths(
+        (spec.available_width as usize).saturating_sub(tag_width),
+        hash_col_width,
+    );
 
     // Branch column: always branch_col_width cells. With a branch we render
     // `[<name>]` padded out with trailing spaces; without one we render
@@ -142,12 +154,39 @@ pub fn render_commit_row<'a>(spec: &CommitRowSpec<'a>) -> Line<'a> {
         row_text_style,
     ));
 
+    if let Some(since_review) = spec.since_review {
+        spans.push(Span::styled(
+            format!(
+                "{:<width$}",
+                since_review_tag(since_review),
+                width = tag_width
+            ),
+            since_review_style(theme, since_review),
+        ));
+    }
+
     spans.push(Span::styled(
         metadata,
         Style::default().fg(theme.fg_secondary),
     ));
 
     Line::from(spans)
+}
+
+fn since_review_tag(since_review: SinceReview) -> &'static str {
+    match since_review {
+        SinceReview::Unchanged => "unchanged",
+        SinceReview::Changed => "changed",
+        SinceReview::New => "new",
+    }
+}
+
+fn since_review_style(theme: &Theme, since_review: SinceReview) -> Style {
+    match since_review {
+        SinceReview::Unchanged => styles::reviewed_style(theme),
+        SinceReview::Changed => styles::pseudo_commit_tag_style(theme),
+        SinceReview::New => styles::pending_style(theme),
+    }
 }
 
 fn commit_column_widths(available_width: usize, hash_col_width: usize) -> (usize, usize) {
@@ -252,6 +291,7 @@ mod tests {
                 is_cursor: false,
                 is_selected: false,
                 is_reviewed: false,
+                since_review: None,
                 theme: &theme,
             }));
 
@@ -272,6 +312,7 @@ mod tests {
             is_cursor: true,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -291,6 +332,7 @@ mod tests {
             is_cursor: false,
             is_selected: true,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -311,6 +353,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -331,6 +374,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: true,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -350,6 +394,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -371,6 +416,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -390,6 +436,7 @@ mod tests {
             is_cursor: true,
             is_selected: true,
             is_reviewed: true,
+            since_review: None,
             theme: &theme,
         }));
         // then
@@ -429,6 +476,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         }));
         let beta = line_text(&render_commit_row(&CommitRowSpec {
@@ -437,6 +485,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         }));
         // then
@@ -460,6 +509,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         }));
         let without_branch = line_text(&render_commit_row(&CommitRowSpec {
@@ -468,6 +518,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         }));
         // then
@@ -489,6 +540,7 @@ mod tests {
             is_cursor: false,
             is_selected: false,
             is_reviewed: false,
+            since_review: None,
             theme: &theme,
         });
         // then
@@ -511,6 +563,7 @@ mod tests {
                 is_cursor: false,
                 is_selected: false,
                 is_reviewed: false,
+                since_review: None,
                 theme: &theme,
             }));
             let wide = line_text(&render_commit_row(&CommitRowSpec {
@@ -519,6 +572,7 @@ mod tests {
                 is_cursor: false,
                 is_selected: false,
                 is_reviewed: false,
+                since_review: None,
                 theme: &theme,
             }));
             // then

@@ -1434,6 +1434,12 @@ pub struct App {
     pub initial_comments_visibility: Option<crate::forge::remote_comments::PrCommentsVisibility>,
     /// Cached individual/subrange diffs keyed by (start_idx, end_idx) into review_commits
     pub commit_diff_cache: HashMap<(usize, usize), Vec<DiffFile>>,
+    /// Commits of the review paired with the versions last reviewed.
+    pub since_review: since_review::SinceReviewState,
+    /// Whether the diff pane shows the since-review diff for a single commit.
+    pub since_review_view: bool,
+    /// Set while `diff_files` holds range-diff entries instead of patches.
+    pub(in crate::app) since_review_showing: bool,
     /// The combined "all selected" diff, cached for quick restoration
     pub range_diff_files: Option<Vec<DiffFile>>,
     /// Saved inline selection range when entering full commit select mode via :commits
@@ -1876,6 +1882,7 @@ mod reviewed;
 mod search;
 mod session;
 pub mod sessions_tab;
+mod since_review;
 mod submit;
 mod theme_picker;
 mod tree;

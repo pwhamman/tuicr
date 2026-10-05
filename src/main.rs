@@ -445,6 +445,7 @@ fn main() -> anyhow::Result<()> {
         needs_redraw |= app.poll_editor_launches();
         needs_redraw |= app.poll_persisted_session_changes();
         needs_redraw |= app.poll_diff_watch_changes();
+        needs_redraw |= app.ensure_since_review();
         needs_redraw |= pr_pending;
 
         if needs_redraw {

@@ -958,6 +958,9 @@ impl App {
     }
 
     pub fn enter_comment_mode(&mut self, file_level: bool, line: Option<(u32, LineSide)>) {
+        if self.deny_comment_on_since_review() {
+            return;
+        }
         self.input_mode = InputMode::Comment;
         if self.diff_view_mode != DiffViewMode::SideBySide {
             self.diff_state.scroll_x = 0;

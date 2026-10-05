@@ -1445,7 +1445,9 @@ pub fn handle_visual_action(app: &mut App, action: Action) {
             app.extend_visual_to_cursor();
         }
         Action::AddRangeComment => {
-            if app.visual_selection_line_range().is_some() {
+            if app.deny_comment_on_since_review() {
+                app.exit_visual_mode();
+            } else if app.visual_selection_line_range().is_some() {
                 app.enter_comment_from_visual();
             } else {
                 app.set_warning("Invalid selection - move cursor to a diff line");
@@ -1763,6 +1765,7 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
         Action::ToggleHelp => app.toggle_help(),
         Action::EnterCommandMode => app.enter_command_mode(),
         Action::EnterSearchMode => app.enter_search_mode(),
+        Action::AddLineComment | Action::AddFileComment if app.deny_comment_on_since_review() => {}
         Action::AddLineComment => {
             let line = app.get_line_at_cursor();
             if line.is_some() {
@@ -1816,6 +1819,7 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
                 app.set_error(format!("Failed to load diff: {e}"));
             }
         }
+        Action::ToggleSinceReview => app.toggle_since_review_view(),
         Action::EditFile => app.queue_editor_for_focused_item(),
         _ => {}
     }

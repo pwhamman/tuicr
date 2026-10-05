@@ -8,8 +8,10 @@ use serde::Serialize;
 use crate::app::App;
 use crate::error::{Result, TuicrError};
 use crate::model::DiffFile;
+use crate::model::SessionDiffSource;
 use crate::model::review::ReviewedPatch;
 use crate::review_store::ReviewStore;
+use crate::since_review::{self, Comparison, SinceReview};
 use crate::syntax::SyntaxHighlighter;
 use crate::vcs::{DiffWhitespaceMode, GitBackend, GitBackendPreference};
 use crate::vcs::{ResolvedRevisionRange, RevisionDiffTarget, VcsBackend};
@@ -27,6 +29,9 @@ pub struct FileStatusOutput {
 pub struct CommitStatusOutput {
     pub sha: String,
     pub reviewed: bool,
+    /// How the commit's patch compares with the version last reviewed.
+    /// `None` when there is no earlier review to compare with.
+    pub since_review: Option<SinceReview>,
     pub files: Vec<FileStatusOutput>,
 }
 
@@ -44,9 +49,52 @@ pub fn commit_statuses(
 ) -> Result<Vec<CommitStatusOutput>> {
     let vcs = GitBackend::discover_from(repo, preference, whitespace)?;
     let marks = collect_marks(store, repo)?;
-    commits
+    let mut statuses = commits
         .iter()
         .map(|rev| commit_status(&vcs, rev, &marks))
+        .collect::<Result<Vec<_>>>()?;
+    let shas: Vec<String> = statuses.iter().map(|status| status.sha.clone()).collect();
+    if let Some(comparison) = compare_with_previous_review(store, &vcs, &shas) {
+        for status in &mut statuses {
+            let mut patches_of = |sha: &str| patch_keys(&vcs, sha);
+            status.since_review = Some(comparison.status(&status.sha, &mut patches_of));
+        }
+    }
+    Ok(statuses)
+}
+
+fn compare_with_previous_review(
+    store: &ReviewStore,
+    vcs: &dyn VcsBackend,
+    shas: &[String],
+) -> Option<Comparison> {
+    let info = vcs.info();
+    let ordered = since_review::oldest_first(&info.root_path, shas);
+    let previous = store
+        .previous_local_session(
+            &info.root_path,
+            info.branch_name.as_deref(),
+            SessionDiffSource::CommitRange,
+            &ordered,
+        )
+        .ok()??;
+    since_review::compare(
+        &info.root_path,
+        &previous.commit_range?,
+        info.branch_name.as_deref(),
+        &ordered,
+    )
+}
+
+/// The review-mark keys of a commit's patch: what inheritance compares.
+pub(crate) fn patch_keys(vcs: &dyn VcsBackend, sha: &str) -> BTreeSet<ReviewedPatch> {
+    load_commit_files(vcs, sha)
+        .unwrap_or_default()
+        .iter()
+        .map(|file| ReviewedPatch {
+            path: file.display_path().clone(),
+            content_hash: file.content_hash,
+        })
         .collect()
 }
 
@@ -71,6 +119,7 @@ fn commit_status(
     Ok(CommitStatusOutput {
         sha,
         reviewed: files.iter().all(|file| file.reviewed),
+        since_review: None,
         files,
     })
 }
@@ -122,6 +171,7 @@ fn file_status(file: &DiffFile, marks: &BTreeSet<ReviewedPatch>) -> FileStatusOu
 mod tests {
     use super::*;
     use crate::model::{ReviewSession, SessionDiffSource};
+    use crate::since_review::test_repo::ReviewRepo;
     use std::path::PathBuf;
     use std::process::Command;
     use tempfile::{TempDir, tempdir};
@@ -276,5 +326,74 @@ mod tests {
 
         assert_eq!(out[0].files.len(), 1);
         assert_eq!(out[0].files[0].path, ".tuicrignore");
+    }
+
+    fn feat_session(repo: &Path, range: &[&String]) -> ReviewSession {
+        let mut session = ReviewSession::new(
+            repo.to_path_buf(),
+            range.last().unwrap().to_string(),
+            Some("feat".to_string()),
+            SessionDiffSource::CommitRange,
+        );
+        session.commit_range = Some(range.iter().map(|sha| sha.to_string()).collect());
+        session
+    }
+
+    #[test]
+    fn should_report_unchanged_changed_and_new_commits_since_the_reviewed_range() {
+        let repo = ReviewRepo::new();
+        let reviews = tempdir().unwrap();
+        let store = ReviewStore::with_reviews_dir(reviews.path());
+        store
+            .save_review(&feat_session(repo.path(), &[&repo.a, &repo.b]))
+            .unwrap();
+        let (b2, c) = repo.amend_b_and_add_c();
+
+        let out = statuses(&store, repo.path(), &[&repo.a, &b2, &c]);
+
+        let since: Vec<Option<SinceReview>> = out.iter().map(|s| s.since_review).collect();
+        assert_eq!(
+            since,
+            [
+                Some(SinceReview::Unchanged),
+                Some(SinceReview::Changed),
+                Some(SinceReview::New)
+            ]
+        );
+        let json = serde_json::to_value(&out).unwrap();
+        assert_eq!(json[0]["since_review"], "unchanged");
+        assert_eq!(json[1]["since_review"], "changed");
+        assert_eq!(json[2]["since_review"], "new");
+    }
+
+    #[test]
+    fn should_report_null_since_review_without_an_earlier_session() {
+        let repo = ReviewRepo::new();
+        let reviews = tempdir().unwrap();
+        let store = ReviewStore::with_reviews_dir(reviews.path());
+
+        let out = statuses(&store, repo.path(), &[&repo.a, &repo.b]);
+
+        assert_eq!(out[0].since_review, None);
+        let json = serde_json::to_value(&out).unwrap();
+        assert!(json[1]["since_review"].is_null());
+    }
+
+    #[test]
+    fn should_compare_with_the_pushed_branch_when_the_reviewed_commits_are_gone() {
+        let repo = ReviewRepo::new();
+        let _origin = repo.push_to_origin();
+        let reviews = tempdir().unwrap();
+        let store = ReviewStore::with_reviews_dir(reviews.path());
+        let gone = "1".repeat(40);
+        store
+            .save_review(&feat_session(repo.path(), &[&gone]))
+            .unwrap();
+        let (b2, _) = repo.amend_b_and_add_c();
+
+        let out = statuses(&store, repo.path(), &[&repo.a, &b2]);
+
+        assert_eq!(out[0].since_review, Some(SinceReview::Unchanged));
+        assert_eq!(out[1].since_review, Some(SinceReview::Changed));
     }
 }

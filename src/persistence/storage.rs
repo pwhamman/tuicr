@@ -696,11 +696,28 @@ pub fn load_previous_local_session(
     diff_source: SessionDiffSource,
     commit_range: Option<&[String]>,
 ) -> Result<Option<ReviewSession>> {
+    load_previous_local_session_in_dir(
+        &get_reviews_dir()?,
+        repo_path,
+        branch_name,
+        head_commit,
+        diff_source,
+        commit_range,
+    )
+}
+
+pub(crate) fn load_previous_local_session_in_dir(
+    reviews_dir: &Path,
+    repo_path: &Path,
+    branch_name: Option<&str>,
+    head_commit: &str,
+    diff_source: SessionDiffSource,
+    commit_range: Option<&[String]>,
+) -> Result<Option<ReviewSession>> {
     if branch_name.is_none() || matches!(diff_source, SessionDiffSource::PullRequest) {
         return Ok(None);
     }
-    let reviews_dir = get_reviews_dir()?;
-    maybe_migrate(&reviews_dir)?;
+    maybe_migrate(reviews_dir)?;
 
     let owner_repo = slug::resolve_owner_repo(repo_path)
         .map_err(|e| TuicrError::CorruptedSession(format!("slug derive: {e}")))?;
@@ -713,7 +730,7 @@ pub fn load_previous_local_session(
     )
     .map_err(|e| TuicrError::CorruptedSession(format!("slug build: {e}")))?;
 
-    let manifest = manifest::load_manifest(&reviews_dir).unwrap_or_default();
+    let manifest = manifest::load_manifest(reviews_dir).unwrap_or_default();
     let canonical = fs::canonicalize(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
     let newest = manifest
         .iter()

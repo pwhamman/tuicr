@@ -93,6 +93,26 @@ Target flags:
 - use `--username <name>` to identify the comment author; otherwise tuicr uses
   the configured `username` or `"user"`
 
+## Commit review status
+
+```bash
+tuicr review status --repo . --commits <sha>,<sha>
+```
+
+Prints one JSON object per commit: its full `sha`, whether every file patch is marked
+`reviewed`, the per-file `content_hash`, `reviewed`, `added` and `deleted` counts, and
+`since_review`.
+
+`since_review` compares the commit with the version last reviewed, the same pairing the TUI
+shows. It is `"unchanged"`, `"changed"` or `"new"`, or `null` when no earlier session exists for
+the checkout and branch, or the old range cannot be compared.
+
+```json
+[
+  { "sha": "5fca649...", "reviewed": false, "since_review": "changed", "files": [ ... ] }
+]
+```
+
 ## Delete and clear comments
 
 Delete one comment by id:

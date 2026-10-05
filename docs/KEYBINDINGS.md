@@ -133,6 +133,7 @@ Shown below the file tree when local comments or visible remote PR threads exist
 |-----|--------|
 | `r` | Toggle file reviewed |
 | `R` | Toggle hunk reviewed |
+| `s` | Switch the current commit between its full diff and what changed since you reviewed it (see [Changes since review](#changes-since-review)) |
 | `c` | Add line comment (or file comment if not on a diff line) |
 | `C` | Add file comment |
 | `<leader>c` | Add review comment |
@@ -313,6 +314,26 @@ commit an approval covered, so no commits are preselected there.
 | `Space` / `Enter` | Toggle commit selection (updates diff) |
 | `(` / `)` | Cycle through individual commits |
 | `Esc` | Return focus to diff |
+
+### Changes since review
+
+After a fix round (amended commits, a rebase, a force-push) a commit row can show how its
+patch compares with the version you reviewed: `unchanged`, `changed` or `new`. A row shows no
+tag when there is no earlier review to compare with.
+
+The reviewed version comes from the previous session on the same checkout and branch, the one
+review marks are inherited from. Each new commit is paired with an old one the way
+`git range-diff` pairs them. If the old commits are gone after a force-push, tuicr fetches them
+from `origin`, and when `origin` no longer has them it compares against `origin/<branch>`. A
+commit is `unchanged` when its per-file patches equal the reviewed ones, the same test that
+decides whether an inherited review mark still applies.
+
+Press `s` to switch the current commit between its full diff and the since-review diff. The
+current commit is the one under the commit-list cursor, and the selection narrows to it. The since-review diff lists one entry per changed file plus a
+`Commit message` entry, each named `<path> (since review)`. Lines show the `git range-diff`
+columns: the first column is the change between versions, the rest is the original patch line.
+Navigation and the file list work as usual. Comments, `r` and `R` do not apply to these lines.
+Commits that are `unchanged` or `new` have nothing to show and say so in one line.
 
 ## Confirm dialogs
 

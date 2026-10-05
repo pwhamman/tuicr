@@ -38,6 +38,8 @@ pub enum Action {
     // Review actions
     ToggleReviewed,
     ToggleHunkReviewed,
+    /// Toggle the diff pane between a commit's full diff and its changes since review.
+    ToggleSinceReview,
     AddLineComment,
     AddFileComment,
     EditComment,
@@ -251,6 +253,7 @@ fn map_normal_mode_with_q_quits(key: KeyEvent, leader_key: char, q_quits: bool) 
         // Review actions
         (KeyCode::Char('r'), KeyModifiers::NONE) => Action::ToggleReviewed,
         (KeyCode::Char('R'), _) => Action::ToggleHunkReviewed,
+        (KeyCode::Char('s'), KeyModifiers::NONE) => Action::ToggleSinceReview,
         (KeyCode::Char('c'), KeyModifiers::NONE) => Action::AddLineComment,
         (KeyCode::Char('C'), _) => Action::AddFileComment,
         (KeyCode::Char('i'), KeyModifiers::NONE) => Action::EditComment,
@@ -878,6 +881,19 @@ mod tests {
             DEFAULT_LEADER_KEY,
         );
         assert_eq!(action, Action::ScrollViewDown(1));
+    }
+
+    #[test]
+    fn should_map_s_to_toggle_since_review_in_normal_and_file_tree_modes() {
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
+        assert_eq!(
+            map_normal_mode(key, DEFAULT_LEADER_KEY),
+            Action::ToggleSinceReview
+        );
+        assert_eq!(
+            map_file_tree_mode(key, DEFAULT_LEADER_KEY),
+            Action::ToggleSinceReview
+        );
     }
 
     #[test]
