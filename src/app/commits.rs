@@ -783,6 +783,14 @@ impl App {
         };
     }
 
+    /// Parent of the oldest selected commit, stamped next to
+    /// `commit_id_for_new_comment` so a PR comment records the diff base its
+    /// line numbers came from. `None` outside PR mode or without a subset.
+    pub(in crate::app) fn commit_base_for_new_comment(&self) -> Option<String> {
+        self.commit_id_for_new_comment()?;
+        self.pr_range_sha_pair().map(|(base, _)| base)
+    }
+
     pub(in crate::app) fn mark_pr_commits_reviewed_through(&mut self, commit_id: &str) {
         if !matches!(&self.diff_source, DiffSource::PullRequest(_)) {
             return;

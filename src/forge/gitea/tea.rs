@@ -2212,6 +2212,7 @@ mod tests {
             old_path: old_path.map(PathBuf::from),
             body: "looks wrong".to_string(),
             comment_id: "local-1".to_string(),
+            commit_scope: None,
         }
     }
 

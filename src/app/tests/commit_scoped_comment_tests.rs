@@ -222,6 +222,7 @@ fn add_comment_to_session_stamps_commit_id_when_provided() {
             comment_type: CommentType::from_id("note"),
             author: "user".to_string(),
             commit_id: Some("abc123".to_string()),
+            commit_base_sha: None,
         },
     )
     .unwrap();
@@ -270,6 +271,7 @@ fn add_comment_to_session_leaves_commit_id_none_when_not_provided() {
             comment_type: CommentType::from_id("note"),
             author: "user".to_string(),
             commit_id: None,
+            commit_base_sha: None,
         },
     )
     .unwrap();

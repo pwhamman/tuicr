@@ -595,11 +595,15 @@ where
             // new_line to resolve the position. For added lines only new_line,
             // for deleted lines only old_line. counterpart_line carries the
             // "other side" line number populated by the diff mapper for context lines.
+            let (position_base, position_start, position_head) = match &comment.commit_scope {
+                Some(scope) => (&scope.base_sha, &scope.base_sha, &scope.head_sha),
+                None => (&pr.base_sha, &start_sha, &pr.head_sha),
+            };
             let mut position = serde_json::json!({
                 "position_type": "text",
-                "base_sha": pr.base_sha,
-                "start_sha": start_sha,
-                "head_sha": pr.head_sha,
+                "base_sha": position_base,
+                "start_sha": position_start,
+                "head_sha": position_head,
                 "old_path": old_path,
                 "new_path": new_path,
             });
@@ -1512,6 +1516,7 @@ mod tests {
             old_path: None,
             body: "nice work".to_string(),
             comment_id: "c1".to_string(),
+            commit_scope: None,
         };
         let response = r#"{"id":"disc-abc","individual_note":false}"#.to_string();
         let runner = RecordingRunner::new_with_responses(vec![response]);
@@ -1574,6 +1579,7 @@ mod tests {
             old_path: None,
             body: "old code".to_string(),
             comment_id: "c2".to_string(),
+            commit_scope: None,
         };
         let response = r#"{"id":"disc-def","individual_note":false}"#.to_string();
         let runner = RecordingRunner::new_with_responses(vec![response]);
@@ -1631,6 +1637,7 @@ mod tests {
             old_path: None,
             body: "range comment".to_string(),
             comment_id: "c-range".to_string(),
+            commit_scope: None,
         };
         let response = r#"{"id":"disc-range","individual_note":false}"#.to_string();
         let runner = RecordingRunner::new_with_responses(vec![response]);
@@ -1692,6 +1699,7 @@ mod tests {
             old_path: None,
             body: "range ending on context".to_string(),
             comment_id: "c-range-ctx".to_string(),
+            commit_scope: None,
         };
         let response = r#"{"id":"disc-range-ctx","individual_note":false}"#.to_string();
         let runner = RecordingRunner::new_with_responses(vec![response]);
@@ -1735,6 +1743,7 @@ mod tests {
             old_path: Some("src/old_name.rs".into()),
             body: "renamed file comment".to_string(),
             comment_id: "c-rename".to_string(),
+            commit_scope: None,
         };
         let response = r#"{"id":"disc-rename","individual_note":false}"#.to_string();
         let runner = RecordingRunner::new_with_responses(vec![response]);
@@ -1772,6 +1781,7 @@ mod tests {
             old_path: None,
             body: "context comment".to_string(),
             comment_id: "c3".to_string(),
+            commit_scope: None,
         };
         let response = r#"{"id":"disc-ctx","individual_note":false}"#.to_string();
         let runner = RecordingRunner::new_with_responses(vec![response]);
@@ -1814,6 +1824,7 @@ mod tests {
             old_path: None,
             body: "looks good".to_string(),
             comment_id: "c-approve".to_string(),
+            commit_scope: None,
         };
         let runner = RecordingRunner::new_with_responses(vec![
             r#"{"id":"disc-approve","individual_note":false}"#.to_string(),
@@ -1856,6 +1867,7 @@ mod tests {
             old_path: None,
             body: "please change this".to_string(),
             comment_id: "c-rc".to_string(),
+            commit_scope: None,
         };
         let runner = RecordingRunner::new_with_responses(vec![
             // body note POST
@@ -1935,6 +1947,7 @@ mod tests {
             old_path: None,
             body: "please change this".to_string(),
             comment_id: "c-rc-err".to_string(),
+            commit_scope: None,
         };
         let runner = RecordingRunner::new_with_responses(vec![
             r#"{"id":"disc-rc","individual_note":false}"#.to_string(),
@@ -2001,6 +2014,7 @@ mod tests {
             old_path: None,
             body: "inline draft".to_string(),
             comment_id: "c1".to_string(),
+            commit_scope: None,
         };
         let runner = RecordingRunner::new_with_responses(vec![
             r#"{"id":10}"#.to_string(),
@@ -2082,6 +2096,7 @@ mod tests {
             old_path: None,
             body: "inline draft".to_string(),
             comment_id: "c1".to_string(),
+            commit_scope: None,
         };
         let runner = RecordingRunner::new_with_responses(vec![
             r#"{"id":1}"#.to_string(),
@@ -2124,6 +2139,7 @@ mod tests {
             old_path: None,
             body: "inline comment".to_string(),
             comment_id: "c1".to_string(),
+            commit_scope: None,
         };
         let runner = RecordingRunner::new_with_responses(vec![
             String::new(),
@@ -2149,6 +2165,78 @@ mod tests {
                 "comment path must not hit draft_notes"
             );
         }
+    }
+
+    fn scoped_position_inline(comment_id: &str, scope: Option<(&str, &str)>) -> InlineComment {
+        InlineComment {
+            path: "src/lib.rs".into(),
+            line: 15,
+            side: GhSide::Right,
+            counterpart_line: None,
+            start_line: None,
+            start_side: None,
+            range_anchors: None,
+            old_path: None,
+            body: "x".to_string(),
+            comment_id: comment_id.to_string(),
+            commit_scope: scope.map(|(base, head)| crate::forge::submit::CommitScope {
+                base_sha: base.to_string(),
+                head_sha: head.to_string(),
+            }),
+        }
+    }
+
+    fn positions_sent(event: crate::forge::submit::SubmitEvent) -> Vec<serde_json::Value> {
+        let repo = ForgeRepository::gitlab("gitlab.com", "owner", "repo");
+        let pr = make_pr_details(repo.clone());
+        let comments = [
+            scoped_position_inline("scoped", Some(("parent1", "commit1"))),
+            scoped_position_inline("whole", None),
+        ];
+        let runner = RecordingRunner::new_with_responses(vec![
+            r#"{"id":1}"#.to_string(),
+            r#"{"id":2}"#.to_string(),
+        ]);
+        let backend = GitLabGlabBackend::with_runner(Some(repo), runner);
+        let request = CreateReviewRequest {
+            event,
+            commit_id: "headsha1",
+            body: "",
+            comments: &comments,
+        };
+        backend.create_review(&pr, request).unwrap();
+        let calls = backend.runner.calls.borrow();
+        calls
+            .iter()
+            .map(|(_, stdin)| {
+                let body: serde_json::Value =
+                    serde_json::from_str(stdin.as_ref().unwrap()).unwrap();
+                body["position"].clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn should_position_commit_scoped_discussion_against_its_commit() {
+        let positions = positions_sent(crate::forge::submit::SubmitEvent::Comment);
+        assert_eq!(positions.len(), 2);
+        assert_eq!(positions[0]["base_sha"], "parent1");
+        assert_eq!(positions[0]["start_sha"], "parent1");
+        assert_eq!(positions[0]["head_sha"], "commit1");
+        assert_eq!(positions[0]["new_line"], 15);
+        assert_eq!(positions[1]["base_sha"], "basesha1");
+        assert_eq!(positions[1]["start_sha"], "startsha1");
+        assert_eq!(positions[1]["head_sha"], "headsha1");
+    }
+
+    #[test]
+    fn should_position_commit_scoped_draft_note_against_its_commit() {
+        let positions = positions_sent(crate::forge::submit::SubmitEvent::Draft);
+        assert_eq!(positions[0]["base_sha"], "parent1");
+        assert_eq!(positions[0]["start_sha"], "parent1");
+        assert_eq!(positions[0]["head_sha"], "commit1");
+        assert_eq!(positions[1]["base_sha"], "basesha1");
+        assert_eq!(positions[1]["head_sha"], "headsha1");
     }
 
     #[test]

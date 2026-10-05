@@ -1058,6 +1058,7 @@ impl App {
                 comment_type: self.comment_type.clone(),
                 author: self.username.clone(),
                 commit_id: None,
+                commit_base_sha: None,
             };
             message = match add_comment_to_session(&mut self.session, request) {
                 Ok(_) => "Review comment added".to_string(),
@@ -1094,6 +1095,7 @@ impl App {
                 comment_type: self.comment_type.clone(),
                 author: self.username.clone(),
                 commit_id: self.commit_id_for_new_comment(),
+                commit_base_sha: self.commit_base_for_new_comment(),
             };
             message = match add_comment_to_session(&mut self.session, request) {
                 Ok(_) => success_message,

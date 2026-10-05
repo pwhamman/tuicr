@@ -2001,6 +2001,7 @@ Match host github-work
             old_path: None,
             body: body.to_string(),
             comment_id: format!("cid-{line}"),
+            commit_scope: None,
         }
     }
 

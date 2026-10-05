@@ -69,6 +69,7 @@ mod tests {
             old_path: None,
             body: "[ISSUE] boom".to_string(),
             comment_id: "test-comment-id".to_string(),
+            commit_scope: None,
         }
     }
 
@@ -122,6 +123,7 @@ mod tests {
             old_path: None,
             body: "ranged".to_string(),
             comment_id: "test-comment-id".to_string(),
+            commit_scope: None,
         };
         let payload = build_review_payload("sha", "", SubmitEvent::Comment, &[inline]);
         let comment = &payload["comments"][0];
@@ -150,6 +152,7 @@ mod tests {
             old_path: None,
             body: String::new(),
             comment_id: "test-comment-id".to_string(),
+            commit_scope: None,
         };
         let payload = build_review_payload("sha", "", SubmitEvent::Comment, &[inline]);
         assert_eq!(payload["comments"][0]["side"], "LEFT");

@@ -1436,6 +1436,7 @@ mod tests {
             old_path: None,
             body: "looks wrong".to_string(),
             comment_id: "local-1".to_string(),
+            commit_scope: None,
         }
     }
 

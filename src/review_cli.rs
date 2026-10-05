@@ -157,6 +157,7 @@ fn add_comment(
             comment_type,
             author,
             commit_id: None,
+            commit_base_sha: None,
         },
     )?;
     let output = CommentOutput::from_target(&target, &comment);
@@ -936,6 +937,7 @@ mod tests {
                     comment_type: CommentType::from_id("issue"),
                     author: "review-agent".to_string(),
                     commit_id: None,
+                    commit_base_sha: None,
                 },
             )
             .unwrap();
@@ -1037,6 +1039,7 @@ mod tests {
                     comment_type: CommentType::from_id("isue"),
                     author: "Codex".to_string(),
                     commit_id: None,
+                    commit_base_sha: None,
                 },
             )
             .expect("an unconfigured type must not block the write");

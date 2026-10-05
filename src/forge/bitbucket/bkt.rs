@@ -970,6 +970,7 @@ mod tests {
             old_path: None,
             body: "a note".to_string(),
             comment_id: "local-1".to_string(),
+            commit_scope: None,
         }
     }
 

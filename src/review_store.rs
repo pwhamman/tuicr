@@ -223,6 +223,8 @@ pub struct AddCommentRequest {
     /// review-level comments and full-range selections. Library callers
     /// (the `review add` CLI) leave this `None`.
     pub commit_id: Option<String>,
+    /// Parent of the oldest selected commit for a subset-scoped comment.
+    pub commit_base_sha: Option<String>,
 }
 
 /// Where a new local draft comment should be attached.
@@ -260,6 +262,7 @@ pub fn add_comment_to_session(
 
     let author = request.author;
     let commit_id = request.commit_id;
+    let commit_base_sha = request.commit_base_sha;
     let comment = match request.target {
         CommentTarget::Review => {
             let comment = Comment::new(content, request.comment_type, None).with_author(author);
@@ -269,6 +272,7 @@ pub fn add_comment_to_session(
         CommentTarget::File { path } => {
             let review = file_review_mut(session, &path)?;
             let mut comment = Comment::new(content, request.comment_type, None).with_author(author);
+            comment.commit_base_sha = commit_base_sha.clone();
             if let Some(sha) = &commit_id {
                 comment = comment.with_commit_id(sha.clone());
             }
@@ -279,6 +283,7 @@ pub fn add_comment_to_session(
             let review = file_review_mut(session, &path)?;
             let mut comment =
                 Comment::new(content, request.comment_type, Some(side)).with_author(author);
+            comment.commit_base_sha = commit_base_sha.clone();
             if let Some(sha) = &commit_id {
                 comment = comment.with_commit_id(sha.clone());
             }
@@ -290,6 +295,7 @@ pub fn add_comment_to_session(
             let mut comment =
                 Comment::new_with_range(content, request.comment_type, Some(side), range)
                     .with_author(author);
+            comment.commit_base_sha = commit_base_sha.clone();
             if let Some(sha) = &commit_id {
                 comment = comment.with_commit_id(sha.clone());
             }
@@ -427,6 +433,7 @@ mod tests {
                 comment_type: CommentType::from_id("praise"),
                 author: crate::model::comment::DEFAULT_AUTHOR.to_string(),
                 commit_id: None,
+                commit_base_sha: None,
             },
         )
         .unwrap();
@@ -448,6 +455,7 @@ mod tests {
                 comment_type: CommentType::from_id("note"),
                 author: crate::model::comment::DEFAULT_AUTHOR.to_string(),
                 commit_id: None,
+                commit_base_sha: None,
             },
         )
         .unwrap();
@@ -473,6 +481,7 @@ mod tests {
                 comment_type: CommentType::from_id("suggestion"),
                 author: crate::model::comment::DEFAULT_AUTHOR.to_string(),
                 commit_id: None,
+                commit_base_sha: None,
             },
         )
         .unwrap();
@@ -495,6 +504,7 @@ mod tests {
                 comment_type: CommentType::from_id("note"),
                 author: crate::model::comment::DEFAULT_AUTHOR.to_string(),
                 commit_id: None,
+                commit_base_sha: None,
             },
         )
         .unwrap_err();
@@ -541,6 +551,7 @@ mod tests {
                     comment_type: CommentType::from_id("note"),
                     author: crate::model::comment::DEFAULT_AUTHOR.to_string(),
                     commit_id: None,
+                    commit_base_sha: None,
                 },
             )
             .unwrap();

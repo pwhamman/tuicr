@@ -192,6 +192,12 @@ pub struct Comment {
     /// comments are always shown.
     #[serde(default)]
     pub commit_id: Option<String>,
+    /// Parent of the oldest selected commit when the comment was made in a
+    /// strict-subset PR view. Together with `commit_id` it names the diff the
+    /// comment's line numbers belong to. `None` for local reviews, full-range
+    /// comments, and legacy session JSON.
+    #[serde(default)]
+    pub commit_base_sha: Option<String>,
 }
 
 impl Comment {
@@ -209,6 +215,7 @@ impl Comment {
             remote_review_id: None,
             remote_comment_id: None,
             commit_id: None,
+            commit_base_sha: None,
         }
     }
 
@@ -232,6 +239,7 @@ impl Comment {
             remote_review_id: None,
             remote_comment_id: None,
             commit_id: None,
+            commit_base_sha: None,
         }
     }
 
@@ -511,6 +519,21 @@ mod tests {
             assert_eq!(restored.lifecycle_state, CommentLifecycleState::Submitted);
             assert_eq!(restored.remote_review_id.as_deref(), Some("R_kgDOEx"));
             assert_eq!(restored.remote_comment_id.as_deref(), Some("RC_kgDOEx"));
+        }
+
+        #[test]
+        fn should_default_commit_base_sha_to_none_for_legacy_comment_json() {
+            let json = r#"{
+                "id": "legacy",
+                "content": "old",
+                "comment_type": "note",
+                "created_at": "2024-01-01T00:00:00Z",
+                "line_context": null,
+                "commit_id": "deadbeef02"
+            }"#;
+            let comment: Comment = serde_json::from_str(json).unwrap();
+            assert_eq!(comment.commit_id.as_deref(), Some("deadbeef02"));
+            assert_eq!(comment.commit_base_sha, None);
         }
 
         #[test]

@@ -164,6 +164,25 @@ pub struct InlineComment {
     /// successful submit to flip the comment's lifecycle state. INTERNAL —
     /// the forge payload builders do not include it in the request body.
     pub comment_id: String,
+    /// Diff the line numbers belong to when the comment was made in a
+    /// strict-subset commit view. `None` means the whole-PR diff.
+    pub commit_scope: Option<CommitScope>,
+}
+
+/// Base and head SHAs of the commit subset a comment's lines were taken from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitScope {
+    pub base_sha: String,
+    pub head_sha: String,
+}
+
+impl CommitScope {
+    pub fn of_comment(comment: &Comment) -> Option<Self> {
+        Some(Self {
+            base_sha: comment.commit_base_sha.clone()?,
+            head_sha: comment.commit_id.clone()?,
+        })
+    }
 }
 
 /// Why the mapper could not produce an inline comment for a given local
@@ -294,6 +313,7 @@ pub fn map_comment(
                     old_path,
                     body: build_inline_body(comment, true, ctx),
                     comment_id: comment.id.clone(),
+                    commit_scope: CommitScope::of_comment(comment),
                 })
             }
             None => MappedComment::Unmappable {
@@ -327,9 +347,43 @@ pub fn map_comment(
                 old_path,
                 body: build_inline_body(comment, false, ctx),
                 comment_id: comment.id.clone(),
+                commit_scope: CommitScope::of_comment(comment),
             }),
         },
     }
+}
+
+/// Keep a commit-scoped comment inline without checking its line against a
+/// diff, for when the diff of its commit subset is not in memory. Line and
+/// range comments anchor at `line`; file-level comments have no line to use.
+pub fn map_comment_unchecked(
+    comment: &Comment,
+    anchor: CommentAnchor,
+    line: u32,
+    path: PathBuf,
+    ctx: SubmitContext<'_>,
+) -> MappedComment {
+    if anchor == CommentAnchor::FileLevel {
+        return MappedComment::Unmappable {
+            comment: comment.clone(),
+            file: path,
+            reason: UnmappableReason::FileLevelNoAnchor,
+        };
+    }
+    let side = comment.side.unwrap_or_default();
+    MappedComment::Inline(InlineComment {
+        path,
+        line,
+        side: side.into(),
+        counterpart_line: None,
+        start_line: comment.line_range.map(|r| r.start),
+        start_side: None,
+        range_anchors: None,
+        old_path: None,
+        body: build_inline_body(comment, false, ctx),
+        comment_id: comment.id.clone(),
+        commit_scope: CommitScope::of_comment(comment),
+    })
 }
 
 /// Old (base-side) path for a renamed/copied file when it differs from the
@@ -467,6 +521,7 @@ fn map_range(
             old_path,
             body: build_inline_body(comment, false, ctx),
             comment_id: comment.id.clone(),
+            commit_scope: CommitScope::of_comment(comment),
         });
     }
 
@@ -485,6 +540,7 @@ fn map_range(
         old_path,
         body: build_inline_body(comment, false, ctx),
         comment_id: comment.id.clone(),
+        commit_scope: CommitScope::of_comment(comment),
     })
 }
 

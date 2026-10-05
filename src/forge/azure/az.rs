@@ -1093,6 +1093,7 @@ mod tests {
             old_path: None,
             body: "please fix".to_string(),
             comment_id: "c1".to_string(),
+            commit_scope: None,
         }
     }
 

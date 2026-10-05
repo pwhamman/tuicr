@@ -23,8 +23,8 @@ impl App {
         skip_confirm: bool,
     ) {
         use crate::forge::submit::{
-            CommentAnchor, InlineComment, ResolverAction, SubmitContext, UnmappableItem,
-            map_comment,
+            CommentAnchor, CommitScope, InlineComment, ResolverAction, SubmitContext,
+            UnmappableItem, map_comment,
         };
 
         let DiffSource::PullRequest(pr) = &self.diff_source else {
@@ -76,7 +76,10 @@ impl App {
                 continue;
             };
             for comment in &review.file_comments {
-                if comment.is_locked() || !self.comment_visible(comment) {
+                if comment.is_locked()
+                    || !self.comment_visible(comment)
+                    || CommitScope::of_comment(comment).is_some()
+                {
                     continue;
                 }
                 total_local_drafts += 1;
@@ -90,7 +93,10 @@ impl App {
             keys.sort();
             for key in keys {
                 for comment in &review.line_comments[key] {
-                    if comment.is_locked() || !self.comment_visible(comment) {
+                    if comment.is_locked()
+                        || !self.comment_visible(comment)
+                        || CommitScope::of_comment(comment).is_some()
+                    {
                         continue;
                     }
                     total_local_drafts += 1;
@@ -110,6 +116,9 @@ impl App {
                 }
             }
         }
+
+        total_local_drafts +=
+            self.map_commit_scoped_comments(submit_ctx, &mut mappable, &mut unmappable);
 
         // Approve is the one event that's meaningful with no comments — a
         // bare "LGTM" approval. Every other event needs at least one local
@@ -141,6 +150,91 @@ impl App {
         } else {
             self.input_mode = InputMode::SubmitConfirm;
         }
+    }
+
+    /// The diff a commit-scoped comment's line numbers belong to. The live
+    /// view when it shows exactly that subset, else the cached subset diff.
+    fn commit_scope_diff(&self, scope: &crate::forge::submit::CommitScope) -> Option<&[DiffFile]> {
+        let wanted = (scope.base_sha.clone(), scope.head_sha.clone());
+        if self.pr_range_sha_pair().as_ref() == Some(&wanted) {
+            return Some(&self.diff_files);
+        }
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return None;
+        };
+        let start = self
+            .pr_commits
+            .iter()
+            .position(|c| c.oid == scope.head_sha)?;
+        let end = if scope.base_sha == pr.base_sha {
+            self.pr_commits.len().checked_sub(1)?
+        } else {
+            self.pr_commits
+                .iter()
+                .position(|c| c.oid == scope.base_sha)?
+                .checked_sub(1)?
+        };
+        self.commit_diff_cache.get(&(start, end)).map(Vec::as_slice)
+    }
+
+    /// Visible, unlocked comments carrying a per-commit position, with the
+    /// anchor and the line they hang on. Sorted by path and line.
+    fn commit_scoped_drafts(
+        &self,
+    ) -> Vec<(PathBuf, u32, crate::forge::submit::CommentAnchor, &Comment)> {
+        use crate::forge::submit::{CommentAnchor, CommitScope};
+        let keep = |c: &Comment| {
+            !c.is_locked() && self.comment_visible(c) && CommitScope::of_comment(c).is_some()
+        };
+        let mut paths: Vec<&PathBuf> = self.session.files.keys().collect();
+        paths.sort();
+        let mut out = Vec::new();
+        for path in paths {
+            let review = &self.session.files[path];
+            for c in review.file_comments.iter().filter(|c| keep(c)) {
+                out.push((path.clone(), 0, CommentAnchor::FileLevel, c));
+            }
+            let mut keys: Vec<&u32> = review.line_comments.keys().collect();
+            keys.sort();
+            for key in keys {
+                for c in review.line_comments[key].iter().filter(|c| keep(c)) {
+                    let anchor = if c.line_range.is_some() {
+                        CommentAnchor::Range
+                    } else {
+                        CommentAnchor::Line {
+                            line: *key,
+                            side: c.side.unwrap_or_default(),
+                        }
+                    };
+                    out.push((path.clone(), *key, anchor, c));
+                }
+            }
+        }
+        out
+    }
+
+    /// Map comments made in a commit-subset view against that subset's own
+    /// diff. Returns how many were considered.
+    fn map_commit_scoped_comments(
+        &self,
+        ctx: crate::forge::submit::SubmitContext<'_>,
+        mappable: &mut Vec<crate::forge::submit::InlineComment>,
+        unmappable: &mut Vec<crate::forge::submit::UnmappableItem>,
+    ) -> usize {
+        use crate::forge::submit::{CommitScope, map_comment, map_comment_unchecked};
+        let drafts = self.commit_scoped_drafts();
+        for (path, line, anchor, comment) in &drafts {
+            let diff = CommitScope::of_comment(comment).and_then(|s| self.commit_scope_diff(&s));
+            let mapped = match diff {
+                Some(files) => match files.iter().find(|f| f.display_path() == path) {
+                    Some(file) => map_comment(comment, *anchor, file, ctx),
+                    None => map_comment_unchecked(comment, *anchor, *line, path.clone(), ctx),
+                },
+                None => map_comment_unchecked(comment, *anchor, *line, path.clone(), ctx),
+            };
+            bucket_mapping(mapped, mappable, unmappable);
+        }
+        drafts.len()
     }
 
     /// Open the bare-`:submit` action picker. The user picks

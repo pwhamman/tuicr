@@ -173,6 +173,14 @@ pub fn render_submit_confirm(frame: &mut Frame, app: &App) {
         "Head: {sha}",
         sha = short_sha(&state.commit_id)
     )));
+    let per_commit = state
+        .mappable
+        .iter()
+        .filter(|c| c.commit_scope.is_some())
+        .count();
+    if per_commit > 0 {
+        lines.push(Line::from(format!("Per-commit positions: {per_commit}")));
+    }
 
     let stale = app.submit_head_is_stale();
     if stale {
@@ -410,6 +418,7 @@ mod tests {
             old_path: None,
             body: "x".to_string(),
             comment_id: "test-comment-id".to_string(),
+            commit_scope: None,
         }
     }
 

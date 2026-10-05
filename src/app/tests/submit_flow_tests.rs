@@ -316,6 +316,55 @@ fn should_open_confirm_directly_when_all_comments_map() {
 }
 
 #[test]
+fn should_keep_commit_scoped_comment_whose_line_exists_only_in_its_commit_diff() {
+    use crate::forge::traits::PullRequestCommit;
+
+    let commit = |oid: &str| PullRequestCommit {
+        oid: oid.to_string(),
+        short_oid: oid[..7].to_string(),
+        summary: oid.to_string(),
+        author: "me".to_string(),
+        timestamp: None,
+    };
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_commits = vec![
+        commit("abcdef0123"),
+        commit("deadbeef02"),
+        commit("facecafe01"),
+    ];
+    app.review_commits = ["abcdef0123", "deadbeef02", "facecafe01"]
+        .iter()
+        .map(|id| crate::vcs::traits::CommitInfo {
+            id: id.to_string(),
+            short_id: id[..7].to_string(),
+            branch_name: None,
+            summary: id.to_string(),
+            body: None,
+            author: "me".to_string(),
+            time: chrono::Utc::now(),
+        })
+        .collect();
+    app.commit_selection_range = Some((1, 1));
+    // The displayed (single-commit) diff has line 99; the cumulative one does not.
+    app.diff_files[0].hunks[0].lines[1].new_lineno = Some(99);
+    let mut comment = line_comment(LineSide::New, Some(99), None);
+    comment.commit_id = Some("deadbeef02".to_string());
+    comment.commit_base_sha = Some("facecafe01".to_string());
+    add_line_comment(&mut app, "src/lib.rs", 99, comment);
+
+    app.start_submit(SubmitEvent::Comment);
+
+    assert_eq!(app.input_mode, InputMode::SubmitConfirm);
+    let state = app.submit_state.as_ref().expect("submit state");
+    assert!(state.unmappable.is_empty());
+    assert_eq!(state.mappable.len(), 1);
+    assert_eq!(state.mappable[0].line, 99);
+    let scope = state.mappable[0].commit_scope.as_ref().expect("scope");
+    assert_eq!(scope.base_sha, "facecafe01");
+    assert_eq!(scope.head_sha, "deadbeef02");
+}
+
+#[test]
 fn should_open_resolver_when_any_comment_is_unmappable() {
     // given a PR session with one mappable + one file-level on a
     // binary file (unmappable).
@@ -628,6 +677,7 @@ fn make_in_flight(
             old_path: None,
             body: "x".to_string(),
             comment_id: (*id).to_string(),
+            commit_scope: None,
         })
         .collect();
     SubmitInFlightState {
